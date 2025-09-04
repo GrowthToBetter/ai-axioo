@@ -14,7 +14,7 @@ import threading
 import queue
 import os
 import logging
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, make_response
 from twilio.rest import Client
 from twilio.twiml.messaging_response import MessagingResponse
 import requests
@@ -204,9 +204,13 @@ class EnhancedEmergencyNLPSystem:
         self.recognizer = sr.Recognizer()
         self.microphone = sr.Microphone()
         self.tts_engine = pyttsx3.init()
-        self.db_manager = SupabasePostgreSQLManager()  # Updated to use Supabase manager
+        self.db_manager = SupabasePostgreSQLManager()
         self.audio_queue = queue.Queue()
+        
+        # Initialize Flask app with CORS support
         self.flask_app = Flask(__name__)
+        CORS(self.flask_app)  # Enable CORS for all routes
+        
         self.setup_flask_routes()
         
         # Setup TTS voice
@@ -236,25 +240,193 @@ class EnhancedEmergencyNLPSystem:
 
     def setup_flask_routes(self):
         """Setup Flask routes untuk WhatsApp webhook"""
+        # Enable CORS for all routes
+        CORS(self.flask_app, 
+             origins=["*"],  # Allow all origins for development
+             methods=["GET", "POST", "OPTIONS"],
+             allow_headers=["Content-Type", "Authorization"])
         @self.flask_app.route('/webhook/whatsapp', methods=['POST'])
         def whatsapp_webhook():
             return self.handle_whatsapp_message()
-        
-        @self.flask_app.route('/webhook/whatsapp/status', methods=['POST'])
-        def whatsapp_status():
-            return self.handle_whatsapp_status()
-        
-        @self.flask_app.route('/api/reports', methods=['GET'])
-        def get_reports():
-            return self.get_reports_api()
-        
-        @self.flask_app.route('/api/reports/<report_id>', methods=['GET'])
-        def get_report_detail(report_id):
-            return self.get_report_detail_api(report_id)
-        
-        @self.flask_app.route('/health', methods=['GET'])
-        def health_check():
-            return jsonify({"status": "healthy", "database": "supabase", "timestamp": datetime.datetime.now().isoformat()})
+        @self.flask_app.route("/webhook/whatsapp/json", methods=["POST", "OPTIONS"])
+        def handle_whatsapp_message_json():
+            """JSON-only endpoint for web clients (Next.js) - Does NOT send WhatsApp messages"""
+            if request.method == "OPTIONS":
+                response = make_response()
+                response.headers.add("Access-Control-Allow-Origin", "*")
+                response.headers.add("Access-Control-Allow-Headers", "Content-Type,Authorization")
+                response.headers.add("Access-Control-Allow-Methods", "GET,PUT,POST,DELETE,OPTIONS")
+                return response
+
+            try:
+                # Parse JSON body
+                data = request.get_json()
+                if not data:
+                    logger.error("No JSON data received")
+                    return jsonify({
+                        "status": "error",
+                        "message": "Invalid JSON or missing data"
+                    }), 400
+
+                # Extract fields
+                from_number = data.get("From", "").replace("whatsapp:", "").strip()
+                message_body = data.get("Body", "").strip()
+
+                # Validate
+                if not from_number:
+                    return jsonify({
+                        "status": "error",
+                        "message": "Missing sender phone number"
+                    }), 400
+
+                if not message_body:
+                    return jsonify({
+                        "status": "error",
+                        "message": "Pesan tidak boleh kosong"
+                    }), 400
+
+                logger.info(f"Web chat message from {from_number}: {message_body[:100]}...")
+
+                # Context for AI
+                context = {
+                    "source": "web",
+                    "phone_number": from_number,
+                    "message_type": "text",
+                    "timestamp": datetime.datetime.now().isoformat()
+                }
+
+                # Step 1: Extract emergency info using GPT-4
+                extracted_info = self.extract_emergency_info_enhanced(message_body, context)
+
+                # Safely extract and validate urgency_level
+                try:
+                    urgency_level = int(extracted_info.get("urgency_level", 3))
+                    if urgency_level < 1:
+                        urgency_level = 1
+                    elif urgency_level > 5:
+                        urgency_level = 5
+                except (TypeError, ValueError):
+                    urgency_level = 3  # fallback
+
+                # Safely extract and validate emergency_type
+                raw_emergency_type = str(extracted_info.get("emergency_type", "lainnya")).lower().strip()
+                valid_emergency_types = {e.value for e in EmergencyType}
+
+                if raw_emergency_type not in valid_emergency_types:
+                    logger.warning(f"Invalid emergency_type '{raw_emergency_type}', falling back to 'lainnya'")
+                    raw_emergency_type = "lainnya"
+
+                emergency_type = EmergencyType(raw_emergency_type)
+                raw_location = extracted_info.get("location", {}).get("raw_location", "tidak diketahui")
+
+                # Generate report ID
+                report_id = f"WEB{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
+
+                # Create EmergencyReport
+                report = EmergencyReport(
+                    id=report_id,
+                    timestamp=datetime.datetime.now(),
+                    caller_info=f"Web Chat: {from_number}",
+                    caller_phone=from_number,
+                    location=raw_location,
+                    emergency_type=emergency_type,
+                    urgency_level=UrgencyLevel(urgency_level),
+                    description=message_body,
+                    structured_data=extracted_info,
+                    ai_recommendations=extracted_info.get("immediate_actions", []),
+                    status=ReportStatus.BARU
+                )
+
+                # Save to database
+                db_success = self.save_report_to_postgresql(report)
+                self.save_whatsapp_conversation(
+                    from_number, message_body, f"SID_{report_id}", "text", None, report_id
+                )
+
+                # Step 2: Generate clean, professional emergency response via GPT-4
+                system_prompt = """
+                Anda adalah operator darurat profesional di Indonesia. Tugas Anda adalah memberikan respons yang:
+                - Profesional, empatik, dan jelas
+                - Terstruktur dalam langkah-langkah mudah diikuti
+                - Fokus pada keselamatan pengguna
+                - Tidak terlalu panjang (maks 200 kata)
+                - Cocok ditampilkan di antarmuka web chat
+                Gunakan format:
+                1. Konfirmasi laporan
+                2. Langkah keselamatan segera
+                3. Informasi tambahan (kontak darurat, nomor laporan)
+                4. Reassurance (tim sedang menindaklanjuti)
+                """
+
+                user_prompt = f"""
+                Laporan dari pengguna:
+                "{message_body}"
+
+                Informasi ekstraksi:
+                - Jenis Darurat: {raw_emergency_type}
+                - Lokasi: {raw_location}
+                - Tingkat Urgensi: {urgency_level}/5
+                - Tindakan segera: {', '.join(extracted_info.get('immediate_actions', []))}
+
+                Nomor Laporan: {report_id}
+
+                Buat respons profesional untuk ditampilkan di web chat.
+                """
+
+                try:
+                    response = client.chat.completions.create(
+                        model="gpt-4",
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt}
+                        ],
+                        temperature=0.3,
+                        max_tokens=300
+                    )
+                    ai_response = response.choices[0].message.content.strip()
+                except Exception as openai_error:
+                    logger.error(f"OpenAI generation error: {openai_error}")
+                    ai_response = (
+                        f"Laporan darurat Anda (No: {report_id}) telah diterima. "
+                        "Tim darurat sedang meninjau situasi. "
+                        "Langkah segera: pastikan keselamatan Anda, jauhi bahaya, dan tunggu bantuan. "
+                        "📞 Hubungi 112 jika situasi kritis."
+                    )
+
+                # Final response
+                response_data = {
+                    "status": "success",
+                    "message": ai_response,
+                    "report_id": report_id,
+                    "emergency_type": raw_emergency_type,
+                    "urgency_level": urgency_level,
+                    "location": raw_location,
+                    "database_saved": db_success,
+                    "emergency_info": extracted_info,
+                    "timestamp": datetime.datetime.now().isoformat(),
+                    "contact": {
+                        "emergency_number": "112",
+                        "report_followup": f"Gunakan nomor laporan: {report_id}"
+                    }
+                }
+
+                logger.info(f"Web chat response generated for {report_id}")
+
+                # Add CORS headers
+                response = jsonify(response_data)
+                response.headers.add("Access-Control-Allow-Origin", "*")
+                return response, 200
+
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON decode error: {e}")
+                return jsonify({"status": "error", "message": "Format JSON tidak valid"}), 400
+            except Exception as e:
+                logger.error(f"Unexpected error in /webhook/whatsapp/json: {e}", exc_info=True)
+                return jsonify({
+                    "status": "error",
+                    "message": "Terjadi kesalahan internal sistem",
+                    "timestamp": datetime.datetime.now().isoformat()
+                }), 500
 
     def enhanced_speech_to_text(self, audio_file_path: str = None, audio_data = None) -> Optional[str]:
         """Enhanced speech recognition dengan multiple fallback"""
@@ -579,8 +751,9 @@ class EnhancedEmergencyNLPSystem:
             conn.close()
 
     def send_whatsapp_message(self, to_number: str, message: str) -> bool:
-        """Send WhatsApp message via Twilio"""
+        """Send WhatsApp message via Twilio - Only called for regular webhook requests"""
         try:
+            logger.info(f"Sending WhatsApp message to {to_number}")
             message = twilio_client.messages.create(
                 body=message,
                 from_=TWILIO_WHATSAPP_NUMBER,
@@ -593,18 +766,27 @@ class EnhancedEmergencyNLPSystem:
         except Exception as e:
             logger.error(f"Error sending WhatsApp message: {e}")
             return False
-
+    
     def handle_whatsapp_message(self):
-        """Handle incoming WhatsApp messages with comprehensive emergency situation guidance"""
+        """Handle incoming WhatsApp messages from Twilio webhook - SENDS WhatsApp messages"""
+        # Initialize response data structure
+        response_data = {
+            "status": "success",
+            "message": "",
+            "report_id": None,
+            "emergency_info": {},
+            "error": None
+        }
+
         try:
-            # Get message data
+            # Get message data from Twilio webhook
             message_sid = request.form.get('MessageSid')
             from_number = request.form.get('From', '').replace('whatsapp:', '')
             message_body = request.form.get('Body', '')
             media_url = request.form.get('MediaUrl0')
             media_content_type = request.form.get('MediaContentType0', '')
 
-            logger.info(f"WhatsApp message from {from_number}: {message_body[:100]}")
+            logger.info(f"WhatsApp webhook from {from_number}: {message_body[:100]}")
 
             # Process voice message with improved handling
             if media_url and 'audio' in media_content_type:
@@ -637,16 +819,23 @@ class EnhancedEmergencyNLPSystem:
                                 message_body = transcribed_text
                                 message_type = "voice"
                                 logger.info(f"Voice message transcribed successfully: {transcribed_text[:100]}...")
+                                response_data["transcribed_text"] = transcribed_text
                             else:
                                 logger.warning("Voice transcription returned empty text")
                                 response_msg = "Maaf, tidak dapat memproses pesan suara. Silakan kirim pesan teks atau coba lagi."
-                                self.send_whatsapp_message(from_number, response_msg)
+                                self.send_whatsapp_message(from_number, response_msg)  # SEND to WhatsApp
+                                response_data["status"] = "error"
+                                response_data["error"] = "Empty voice transcription"
+                                response_data["message"] = response_msg
                                 return str(MessagingResponse())
 
                         except Exception as whisper_error:
                             logger.error(f"Whisper transcription error: {whisper_error}")
                             response_msg = "Maaf, tidak dapat memproses pesan suara. Silakan kirim pesan teks atau coba lagi."
-                            self.send_whatsapp_message(from_number, response_msg)
+                            self.send_whatsapp_message(from_number, response_msg)  # SEND to WhatsApp
+                            response_data["status"] = "error"
+                            response_data["error"] = str(whisper_error)
+                            response_data["message"] = response_msg
                             return str(MessagingResponse())
 
                         finally:
@@ -660,13 +849,19 @@ class EnhancedEmergencyNLPSystem:
                     else:
                         logger.error(f"Failed to download voice message: HTTP {response.status_code}")
                         response_msg = "Maaf, gagal mengunduh pesan suara. Silakan coba kirim ulang atau gunakan pesan teks."
-                        self.send_whatsapp_message(from_number, response_msg)
+                        self.send_whatsapp_message(from_number, response_msg)  # SEND to WhatsApp
+                        response_data["status"] = "error"
+                        response_data["error"] = f"Failed to download voice message: HTTP {response.status_code}"
+                        response_data["message"] = response_msg
                         return str(MessagingResponse())
 
                 except requests.exceptions.RequestException as e:
                     logger.error(f"Error downloading voice message: {e}")
                     response_msg = "Maaf, terjadi kesalahan saat memproses pesan suara. Silakan kirim pesan teks."
-                    self.send_whatsapp_message(from_number, response_msg)
+                    self.send_whatsapp_message(from_number, response_msg)  # SEND to WhatsApp
+                    response_data["status"] = "error"
+                    response_data["error"] = str(e)
+                    response_data["message"] = response_msg
                     return str(MessagingResponse())
 
             else:
@@ -711,18 +906,34 @@ class EnhancedEmergencyNLPSystem:
                     extracted_info, message_body, report_id, from_number
                 )
 
-                # Send response in parts if too long
+                # Send response via WhatsApp (for regular webhook endpoint)
                 self.send_comprehensive_response_parts(from_number, response_text, report_id)
 
                 # Update response sent status
                 if success:
                     self.update_report_response_status(report_id, True)
 
+                # Populate response data
+                response_data["status"] = "success"
+                response_data["message"] = "Response sent via WhatsApp"
+                response_data["report_id"] = report_id
+                response_data["emergency_info"] = {
+                    "emergency_type": extracted_info.get('emergency_type', 'lainnya'),
+                    "urgency_level": extracted_info.get('urgency_level', 3),
+                    "location": extracted_info.get('location', {}).get('raw_location', 'Tidak diketahui'),
+                    "immediate_actions": extracted_info.get('immediate_actions', []),
+                    "caller_phone": from_number,
+                    "message_type": message_type
+                }
+
             else:
                 # Handle empty message case
                 logger.warning(f"Empty message received from {from_number}")
                 response_msg = "Maaf, pesan kosong diterima. Silakan kirim laporan darurat Anda dengan detail yang jelas."
-                self.send_whatsapp_message(from_number, response_msg)
+                self.send_whatsapp_message(from_number, response_msg)  # SEND to WhatsApp
+                response_data["status"] = "error"
+                response_data["error"] = "Empty message received"
+                response_data["message"] = response_msg
 
             return str(MessagingResponse())
 
@@ -733,12 +944,16 @@ class EnhancedEmergencyNLPSystem:
                 # Try to get phone number for error response
                 from_number = request.form.get('From', '').replace('whatsapp:', '')
                 if from_number:
-                    self.send_whatsapp_message(from_number, error_response)
+                    self.send_whatsapp_message(from_number, error_response)  # SEND to WhatsApp
             except Exception as send_error:
                 logger.error(f"Failed to send error response: {send_error}")
 
-            return str(MessagingResponse().message(error_response))
+            response_data["status"] = "error"
+            response_data["error"] = str(e)
+            response_data["message"] = error_response
 
+            return str(MessagingResponse().message(error_response))
+    
     def generate_comprehensive_emergency_response(self, extracted_info: Dict, original_text: str, report_id: str, phone_number: str) -> Dict:
         """Generate comprehensive step-by-step emergency response using GPT-4"""
 
