@@ -25,6 +25,7 @@ import wave
 import audioop
 from urllib.parse import urlparse, unquote
 from dotenv import load_dotenv
+from flask_cors import CORS
 
 # Load file .env
 load_dotenv()
@@ -1782,6 +1783,8 @@ def main_enhanced():
                 logger.error(f"Main error: {e}")
                 print(f"❌ Error: {e}")
 
+app = Flask(__name__)
+CORS(app)
 if __name__ == "__main__":
     print("=" * 60)
     print("🚨 EMERGENCY NLP SYSTEM - SUPABASE ENHANCED VERSION")
