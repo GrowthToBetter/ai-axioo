@@ -8,7 +8,7 @@ echo "📦 Installing Python dependencies..."
 pip install -r requirements.txt
 
 # Setup environment variables
-export FLASK_APP=emergency_nlp_system.py
+export FLASK_APP=Lomba.py
 export FLASK_ENV=production
 
 # Load environment variables dari .env file
@@ -20,7 +20,7 @@ fi
 # Test Supabase connection
 echo "🔗 Testing Supabase connection..."
 python -c "
-from emergency_nlp_system import SupabasePostgreSQLManager
+from Lomba import SupabasePostgreSQLManager
 manager = SupabasePostgreSQLManager()
 conn = manager.get_connection()
 if conn:
@@ -33,7 +33,7 @@ else:
 
 # Start the application
 echo "🔧 Starting Flask webhook server..."
-python emergency_nlp_system.py --mode server --port 5000 &
+python Lomba.py --mode server --port 5000 &
 
 echo "✅ Emergency NLP System started successfully!"
 echo "📱 WhatsApp webhook: http://your-domain:5000/webhook/whatsapp"

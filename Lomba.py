@@ -1,6 +1,6 @@
 import openai
-import speech_recognition as sr
-import pyttsx3
+# import speech_recognition as sr
+# import pyttsx3
 import json
 import datetime
 import re
@@ -250,6 +250,8 @@ class SupabasePostgreSQLManager:
 
 class EnhancedEmergencyNLPSystem:
     def __init__(self, use_microphone=False):
+        import speech_recognition as sr
+        import pyttsx3
         self.recognizer = sr.Recognizer()
         self.microphone = None
         if use_microphone:
@@ -901,212 +903,10 @@ class EnhancedEmergencyNLPSystem:
         finally:
             conn.close()
 
-    # def send_whatsapp_message(self, to_number: str, message: str) -> bool:
-    #     """Send WhatsApp message via Twilio - Only called for regular webhook requests"""
-    #     try:
-    #         logger.info(f"Sending WhatsApp message to {to_number}")
-    #         message = twilio_client.messages.create(
-    #             body=message,
-    #             from_=TWILIO_WHATSAPP_NUMBER,
-    #             to=f"whatsapp:{to_number}"
-    #         )
-            
-    #         logger.info(f"WhatsApp message sent to {to_number}: {message.sid}")
-    #         return True
-            
-    #     except Exception as e:
-    #         logger.error(f"Error sending WhatsApp message: {e}")
-    #         return False
     def send_whatsapp_message(self, to_number: str, message: str) -> bool:
         """Send WhatsApp message via Facebook API - Only called for regular webhook requests"""
         return facebook_whatsapp.send_message(to_number, message)
     
-    # def handle_whatsapp_message(self):
-    #     """Handle incoming WhatsApp messages from Twilio webhook - SENDS WhatsApp messages"""
-    #     # Initialize response data structure
-    #     response_data = {
-    #         "status": "success",
-    #         "message": "",
-    #         "report_id": None,
-    #         "emergency_info": {},
-    #         "error": None
-    #     }
-
-    #     try:
-    #         # Get message data from Twilio webhook
-    #         message_sid = request.form.get('MessageSid')
-    #         from_number = request.form.get('From', '').replace('whatsapp:', '')
-    #         message_body = request.form.get('Body', '')
-    #         media_url = request.form.get('MediaUrl0')
-    #         media_content_type = request.form.get('MediaContentType0', '')
-
-    #         logger.info(f"WhatsApp webhook from {from_number}: {message_body[:100]}")
-
-    #         # Process voice message with improved handling
-    #         if media_url and 'audio' in media_content_type:
-    #             logger.info("Processing voice message...")
-
-    #             try:
-    #                 # Download voice file with proper authentication
-    #                 auth = (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-    #                 response = requests.get(media_url, auth=auth, timeout=30)
-
-    #                 if response.status_code == 200:
-    #                     # Create temporary files for processing
-    #                     with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as ogg_file:
-    #                         ogg_file.write(response.content)
-    #                         ogg_path = ogg_file.name
-
-    #                     # Convert OGG to WAV using OpenAI Whisper API directly
-    #                     try:
-    #                         # Use OpenAI Whisper API which can handle OGG files directly
-    #                         with open(ogg_path, 'rb') as audio_file:
-    #                             transcription = client.audio.transcriptions.create(
-    #                                 model="whisper-1",
-    #                                 file=audio_file,
-    #                                 language="id"  # Indonesian language
-    #                             )
-
-    #                         transcribed_text = transcription.text
-
-    #                         if transcribed_text and transcribed_text.strip():
-    #                             message_body = transcribed_text
-    #                             message_type = "voice"
-    #                             logger.info(f"Voice message transcribed successfully: {transcribed_text[:100]}...")
-    #                             response_data["transcribed_text"] = transcribed_text
-    #                         else:
-    #                             logger.warning("Voice transcription returned empty text")
-    #                             response_msg = "Maaf, tidak dapat memproses pesan suara. Silakan kirim pesan teks atau coba lagi."
-    #                             self.send_whatsapp_message(from_number, response_msg)  # SEND to WhatsApp
-    #                             response_data["status"] = "error"
-    #                             response_data["error"] = "Empty voice transcription"
-    #                             response_data["message"] = response_msg
-    #                             return str(MessagingResponse())
-
-    #                     except Exception as whisper_error:
-    #                         logger.error(f"Whisper transcription error: {whisper_error}")
-    #                         response_msg = "Maaf, tidak dapat memproses pesan suara. Silakan kirim pesan teks atau coba lagi."
-    #                         self.send_whatsapp_message(from_number, response_msg)  # SEND to WhatsApp
-    #                         response_data["status"] = "error"
-    #                         response_data["error"] = str(whisper_error)
-    #                         response_data["message"] = response_msg
-    #                         return str(MessagingResponse())
-
-    #                     finally:
-    #                         # Clean up temporary file
-    #                         if os.path.exists(ogg_path):
-    #                             try:
-    #                                 os.unlink(ogg_path)
-    #                             except Exception as e:
-    #                                 logger.warning(f"Failed to delete temp file {ogg_path}: {e}")
-
-    #                 else:
-    #                     logger.error(f"Failed to download voice message: HTTP {response.status_code}")
-    #                     response_msg = "Maaf, gagal mengunduh pesan suara. Silakan coba kirim ulang atau gunakan pesan teks."
-    #                     self.send_whatsapp_message(from_number, response_msg)  # SEND to WhatsApp
-    #                     response_data["status"] = "error"
-    #                     response_data["error"] = f"Failed to download voice message: HTTP {response.status_code}"
-    #                     response_data["message"] = response_msg
-    #                     return str(MessagingResponse())
-
-    #             except requests.exceptions.RequestException as e:
-    #                 logger.error(f"Error downloading voice message: {e}")
-    #                 response_msg = "Maaf, terjadi kesalahan saat memproses pesan suara. Silakan kirim pesan teks."
-    #                 self.send_whatsapp_message(from_number, response_msg)  # SEND to WhatsApp
-    #                 response_data["status"] = "error"
-    #                 response_data["error"] = str(e)
-    #                 response_data["message"] = response_msg
-    #                 return str(MessagingResponse())
-
-    #         else:
-    #             message_type = "text"
-
-    #         # Process emergency report only if we have message content
-    #         if message_body and message_body.strip():
-    #             context = {
-    #                 "source": "whatsapp",
-    #                 "phone_number": from_number,
-    #                 "message_type": message_type
-    #             }
-
-    #             # Create emergency report
-    #             extracted_info = self.extract_emergency_info_enhanced(message_body, context)
-
-    #             report_id = f"WA{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
-
-    #             report = EmergencyReport(
-    #                 id=report_id,
-    #                 timestamp=datetime.datetime.now(),
-    #                 caller_info=f"WhatsApp: {from_number}",
-    #                 caller_phone=from_number,
-    #                 location=extracted_info.get('location', {}).get('raw_location', 'Tidak diketahui'),
-    #                 emergency_type=EmergencyType(extracted_info.get('emergency_type', 'lainnya')),
-    #                 urgency_level=UrgencyLevel(extracted_info.get('urgency_level', 3)),
-    #                 description=message_body,
-    #                 structured_data=extracted_info,
-    #                 ai_recommendations=extracted_info.get('immediate_actions', []),
-    #                 voice_file_path=media_url if message_type == "voice" else None
-    #             )
-
-    #             # Save to database
-    #             success = self.save_report_to_postgresql(report)
-    #             self.save_whatsapp_conversation(
-    #                 from_number, message_body, message_sid, 
-    #                 message_type, media_url, report_id
-    #             )
-
-    #             # Generate comprehensive step-by-step response
-    #             response_text = self.generate_comprehensive_emergency_response(
-    #                 extracted_info, message_body, report_id, from_number
-    #             )
-
-    #             # Send response via WhatsApp (for regular webhook endpoint)
-    #             self.send_comprehensive_response_parts(from_number, response_text, report_id)
-
-    #             # Update response sent status
-    #             if success:
-    #                 self.update_report_response_status(report_id, True)
-
-    #             # Populate response data
-    #             response_data["status"] = "success"
-    #             response_data["message"] = "Response sent via WhatsApp"
-    #             response_data["report_id"] = report_id
-    #             response_data["emergency_info"] = {
-    #                 "emergency_type": extracted_info.get('emergency_type', 'lainnya'),
-    #                 "urgency_level": extracted_info.get('urgency_level', 3),
-    #                 "location": extracted_info.get('location', {}).get('raw_location', 'Tidak diketahui'),
-    #                 "immediate_actions": extracted_info.get('immediate_actions', []),
-    #                 "caller_phone": from_number,
-    #                 "message_type": message_type
-    #             }
-
-    #         else:
-    #             # Handle empty message case
-    #             logger.warning(f"Empty message received from {from_number}")
-    #             response_msg = "Maaf, pesan kosong diterima. Silakan kirim laporan darurat Anda dengan detail yang jelas."
-    #             self.send_whatsapp_message(from_number, response_msg)  # SEND to WhatsApp
-    #             response_data["status"] = "error"
-    #             response_data["error"] = "Empty message received"
-    #             response_data["message"] = response_msg
-
-    #         return str(MessagingResponse())
-
-    #     except Exception as e:
-    #         logger.error(f"Error handling WhatsApp message: {e}")
-    #         error_response = "Terjadi kesalahan sistem. Tim teknis akan segera menindaklanjuti laporan Anda."
-    #         try:
-    #             # Try to get phone number for error response
-    #             from_number = request.form.get('From', '').replace('whatsapp:', '')
-    #             if from_number:
-    #                 self.send_whatsapp_message(from_number, error_response)  # SEND to WhatsApp
-    #         except Exception as send_error:
-    #             logger.error(f"Failed to send error response: {send_error}")
-
-    #         response_data["status"] = "error"
-    #         response_data["error"] = str(e)
-    #         response_data["message"] = error_response
-
-    #         return str(MessagingResponse().message(error_response))
     def handle_facebook_webhook(self):
         """Optimized Facebook webhook handler"""
         try:
@@ -2122,60 +1922,7 @@ def main_enhanced(system):
         # Run WhatsApp webhook server
         print("🚀 Starting WhatsApp webhook server with Supabase...")
         system.run_whatsapp_server(host=args.host, port=args.port)
-        
-    elif args.mode == 'text':
-        system.run_text_mode_enhanced()
-        
-    elif args.mode == 'voice':
-        system.run_voice_mode_enhanced()
-        
-    elif args.mode == 'dashboard':
-        system.show_dashboard_enhanced()
-        
-    else:
-        # Interactive menu
-        print("🚨 SISTEM NLP DARURAT - SUPABASE ENHANCED VERSION")
-        print("=" * 50)
-        print("1. Mode Teks Enhanced")
-        print("2. Mode Suara Enhanced") 
-        print("3. Dashboard Analytics Enhanced")
-        print("4. Start WhatsApp Server")
-        print("5. Test Supabase Connection")
-        print("6. Keluar")
-        
-        while True:
-            try:
-                choice = input("\nPilih mode (1-6): ").strip()
-                
-                if choice == "1":
-                    system.run_text_mode_enhanced()
-                elif choice == "2":
-                    system.run_voice_mode_enhanced()
-                elif choice == "3":
-                    system.show_dashboard_enhanced()
-                elif choice == "4":
-                    port = input("Port (default 5000): ").strip() or "5000"
-                    system.run_whatsapp_server(port=int(port))
-                elif choice == "5":
-                    # Test Supabase connection
-                    conn = system.db_manager.get_connection()
-                    if conn:
-                        print("✅ Supabase connection successful!")
-                        conn.close()
-                    else:
-                        print("❌ Supabase connection failed!")
-                elif choice == "6":
-                    print("👋 Sistem ditutup")
-                    break
-                else:
-                    print("❌ Pilihan tidak valid")
-                    
-            except KeyboardInterrupt:
-                print("\n👋 Sistem ditutup")
-                break
-            except Exception as e:
-                logger.error(f"Main error: {e}")
-                print(f"❌ Error: {e}")
+    system.run_whatsapp_server(port=int(5000))
 
 
 def create_app():
@@ -2187,68 +1934,6 @@ def create_app():
 app = create_app()
 
 CORS(app)
-@app.route('/health', methods=['GET'])
-def health_check():
-    """Health check endpoint for Render"""
-    try:
-        # Test database connection
-        system = EnhancedEmergencyNLPSystem()
-        conn = system.db_manager.get_connection()
-        db_status = "connected" if conn else "disconnected"
-        if conn:
-            conn.close()
-        
-        # Test OpenAI API
-        openai_status = "ok" if openai.api_key else "missing_key"
-        
-        return jsonify({
-            "status": "healthy",
-            "timestamp": datetime.datetime.now().isoformat(),
-            "database": db_status,
-            "openai": openai_status,
-            "environment": os.getenv("FLASK_ENV", "development"),
-            "version": "1.0.0"
-        }), 200
-        
-    except Exception as e:
-        return jsonify({
-            "status": "unhealthy",
-            "error": str(e),
-            "timestamp": datetime.datetime.now().isoformat()
-        }), 500
-
-@app.route('/', methods=['GET'])
-def index():
-    """Root endpoint"""
-    return jsonify({
-        "service": "Emergency NLP System",
-        "status": "running",
-        "endpoints": {
-            "webhook": "/webhook/whatsapp",
-            "json_api": "/webhook/whatsapp/json", 
-            "health": "/health",
-            "reports": "/api/reports"
-        }
-    })
-
-@app.route('/api/reports', methods=['GET'])
-def get_reports():
-    """API endpoint for reports"""
-    try:
-        system = EnhancedEmergencyNLPSystem()
-        return system.get_reports_api()
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-# Error handlers
-@app.errorhandler(404)
-def not_found(error):
-    return jsonify({"error": "Endpoint not found"}), 404
-
-@app.errorhandler(500)
-def internal_error(error):
-    return jsonify({"error": "Internal server error"}), 500
-
 if __name__ == "__main__":
     print("=" * 60)
     print("🚨 EMERGENCY NLP SYSTEM - SUPABASE ENHANCED VERSION")

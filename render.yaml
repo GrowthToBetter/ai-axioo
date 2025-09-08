@@ -2,37 +2,37 @@ services:
   - type: web
     name: emergency-nlp-system
     env: python
-    buildCommand: "./build.sh"
-    startCommand: "./start_render.sh"
+    buildCommand: pip install -r requirements.txt
+    startCommand: ./start_render.sh
     plan: starter
-    healthCheckPath: "/health"
-    
+    healthCheckPath: /health
+    autoDeploy: true
+
     envVars:
+      - key: PORT
+        generateValue: true
       - key: PYTHON_VERSION
         value: 3.11.0
       - key: FLASK_ENV
         value: production
-      - key: FLASK_APP
-        value: Lomba.py
+      # HAPUS FLASK_APP — tidak digunakan oleh Gunicorn
       - key: WEB_CONCURRENCY
-        value: 2
-      - key: PORT
-        generateValue: true
-    
-    # Environment variables that need to be set in Render dashboard:
-    # OPENAI_API_KEY
-    # DATABASE_URL  
-    # DIRECT_URL
-    # FACEBOOK_ACCESS_TOKEN
-    # FACEBOOK_PHONE_NUMBER_ID
-    # FACEBOOK_WEBHOOK_VERIFY_TOKEN
-    
-    autoDeploy: true
-    
-  # Optional: Background worker service
-  # - type: worker  
-  #   name: emergency-nlp-worker
-  #   env: python
-  #   buildCommand: "./build.sh"
-  #   startCommand: "python worker.py"
-  #   plan: starter
+        value: 1  # Render Free instance hanya punya 0.1 vCPU, 1 worker lebih stabil
+
+      # Tambahkan secret langsung (opsional), atau isi di dashboard
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: FACEBOOK_ACCESS_TOKEN
+        sync: false
+      - key: FACEBOOK_PHONE_NUMBER_ID
+        sync: false
+      - key: FACEBOOK_WEBHOOK_VERIFY_TOKEN
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_URL
+        sync: false
+
+      # Tambahkan untuk deteksi lingkungan
+      - key: RENDER
+        value: true

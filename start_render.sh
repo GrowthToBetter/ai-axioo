@@ -1,32 +1,35 @@
 #!/bin/bash
-echo "Starting Emergency NLP System on Render..."
 
-# Set environment variables
-export FLASK_APP=Lomba.py
-export FLASK_ENV=production
+echo "🚀 Starting Emergency NLP System on Render..."
+echo "📦 Environment: Production"
+echo "🔌 Port: $PORT"
 
-# For local testing, you can test the health endpoint first:
-# python -c "
-# import os
-# from Lomba import app
-# print('Testing Flask app...')
-# with app.test_client() as client:
-#     response = client.get('/health')
-#     print(f'Health check: {response.status_code}')
-# "
+# Pastikan PORT terisi
+if [ -z "$PORT" ]; then
+  echo "❌ Error: PORT environment variable is not set"
+  exit 1
+fi
 
-echo "Starting Gunicorn server..."
-echo "App module: Lomba:app"
-echo "Port: $PORT"
+echo "⚙️  Starting Gunicorn server..."
+echo "➡️  App module: Lomba:app"
+echo "🔧 Workers: 1 (sync), Timeout: 120s"
 
-# Start Gunicorn with the correct app reference
-exec gunicorn \
-    --bind 0.0.0.0:$PORT \
-    --workers 1 \
-    --worker-class sync \
-    --timeout 120 \
-    --keep-alive 60 \
-    --max-requests 100 \
-    --max-requests-jitter 10 \
-    --log-level info \
-    Lomba:app
+# Jalankan Gunicorn
+gunicorn \
+  --bind 0.0.0.0:$PORT \
+  --workers 1 \
+  --worker-class sync \
+  --timeout 120 \
+  --keep-alive 5 \
+  --max-requests 1000 \
+  --max-requests-jitter 100 \
+  --log-level info \
+  --access-logfile - \
+  --error-logfile - \
+  Lomba:app
+
+# Tangkap status exit
+if [ $? -ne 0 ]; then
+  echo "❌ Gunicorn failed to start"
+  exit 1
+fi
