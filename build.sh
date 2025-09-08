@@ -1,41 +1,22 @@
-#!/usr/bin/env bash
-# build.sh - Render Build Script for Emergency NLP System
+#!/bin/bash
+echo "Starting build process..."
 
-set -o errexit
-
-echo "🚀 Starting Render deployment build..."
-
-# Update system packages
-echo "📦 Updating system packages..."
-apt-get update
-
-# Install system dependencies for audio processing
-echo "🔊 Installing system dependencies..."
-apt-get install -y \
-    portaudio19-dev \
-    python3-pyaudio \
-    flac \
-    ffmpeg \
-    libportaudio2 \
-    libportaudiocpp0 \
-    libasound-dev \
-    build-essential
-
-# Install Python dependencies
-echo "🐍 Installing Python dependencies..."
-pip install --upgrade pip
+# Install dependencies
+echo "Installing Python dependencies..."
 pip install -r requirements.txt
 
-# Set up environment
-echo "🔧 Setting up environment..."
+# Setup environment variables
+echo "Setting up environment variables..."
+export FLASK_APP=Lomba.py
+export FLASK_ENV=production
 
-# Create necessary directories
-mkdir -p logs
-mkdir -p temp
-mkdir -p audio
+# Create a temporary .env file for the build process
+echo "Creating temporary .env file..."
+cp .env.supabase.template .env
 
-# Set permissions
-chmod +x start_render.sh
+# Remove unnecessary files
+echo "Cleaning up unnecessary files..."
+rm -f *.pyc __pycache__/*.pyc *.pyo *.pyd
+find . -type d -name "__pycache__" -exec rm -rf {} +
 
-echo "✅ Build completed successfully!"
-echo "🚨 Emergency NLP System ready for deployment"
+echo "Build completed successfully!"
