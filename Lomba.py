@@ -313,6 +313,66 @@ class EnhancedEmergencyNLPSystem:
         @self.flask_app.route('/webhook/whatsapp', methods=['POST'])
         def facebook_webhook():
             return self.handle_facebook_webhook()
+        @app.route('/health', methods=['GET'])
+        def health_check():
+            """Health check endpoint for Render"""
+            try:
+                # Test database connection
+                conn = self.db_manager.get_connection()
+                db_status = "connected" if conn else "disconnected"
+                if conn:
+                    conn.close()
+                
+                # Test OpenAI API
+                openai_status = "ok" if openai.api_key else "missing_key"
+                
+                return jsonify({
+                    "status": "healthy",
+                    "timestamp": datetime.datetime.now().isoformat(),
+                    "database": db_status,
+                    "openai": openai_status,
+                    "environment": os.getenv("FLASK_ENV", "development"),
+                    "version": "1.0.0"
+                }), 200
+                
+            except Exception as e:
+                return jsonify({
+                    "status": "unhealthy",
+                    "error": str(e),
+                    "timestamp": datetime.datetime.now().isoformat()
+                }), 500
+        
+        @app.route('/', methods=['GET'])
+        def index():
+            """Root endpoint"""
+            return jsonify({
+                "service": "Emergency NLP System",
+                "status": "running",
+                "endpoints": {
+                    "webhook": "/webhook/whatsapp",
+                    "json_api": "/webhook/whatsapp/json",
+                    "health": "/health",
+                    "reports": "/api/reports"
+                }
+            })
+        
+        @app.route('/api/reports', methods=['GET'])
+        def get_reports():
+            """API endpoint for reports"""
+            try:
+                system = EnhancedEmergencyNLPSystem()
+                return system.get_reports_api()
+            except Exception as e:
+                return jsonify({"error": str(e)}), 500
+        
+        # Add error handlers
+        @app.errorhandler(404)
+        def not_found(error):
+            return jsonify({"error": "Endpoint not found"}), 404
+        
+        @app.errorhandler(500)
+        def internal_error(error):
+            return jsonify({"error": "Internal server error"}), 500
         @self.flask_app.route("/webhook/whatsapp/json", methods=["POST", "OPTIONS"])
         def handle_whatsapp_message_json():
             """JSON-only endpoint for web clients (Next.js) - Does NOT send WhatsApp messages"""
