@@ -249,9 +249,18 @@ class SupabasePostgreSQLManager:
             logger.error("Failed to connect to Supabase for table creation")
 
 class EnhancedEmergencyNLPSystem:
-    def __init__(self):
+    def __init__(self, use_microphone=False):
         self.recognizer = sr.Recognizer()
-        self.microphone = sr.Microphone()
+        self.microphone = None
+        if use_microphone:
+            try:
+                self.microphone = sr.Microphone()
+                print("✅ Microphone initialized (local mode)")
+            except Exception as e:
+                print(f"⚠️  Microphone not available: {e}")
+                self.microphone = None
+        else:
+            print("🔇 Microphone disabled (running on server)")
         self.tts_engine = pyttsx3.init()
         self.db_manager = SupabasePostgreSQLManager()
         self.audio_queue = queue.Queue()
