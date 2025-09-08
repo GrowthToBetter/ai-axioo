@@ -2101,7 +2101,7 @@ MAX_AUDIO_FILE_SIZE=
     
     print("📄 Supabase environment template created: .env.supabase.template")
 
-def main_enhanced():
+def main_enhanced(system):
     """Enhanced main function dengan mode selection dan Supabase support"""
     import argparse
     
@@ -2117,9 +2117,6 @@ def main_enhanced():
     create_requirements_file_supabase()
     create_env_template_supabase()
     create_startup_script_supabase()
-    
-    # Initialize system
-    system = EnhancedEmergencyNLPSystem()
     
     if args.mode == 'server':
         # Run WhatsApp webhook server
@@ -2183,7 +2180,7 @@ def main_enhanced():
 
 def create_app():
     """Factory function to create Flask app"""
-    system = EnhancedEmergencyNLPSystem()
+    system = EnhancedEmergencyNLPSystem(use_microphone=False)
     return system.flask_app
 
 # Create the app instance that Gunicorn can find
@@ -2270,5 +2267,6 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == '--dev':
         app.run(host='0.0.0.0', port=int(os.getenv('PORT', 5000)), debug=True)
     else:
+        system = EnhancedEmergencyNLPSystem(use_microphone=True)
         # For production, let Gunicorn handle it
-        main_enhanced()
+        main_enhanced(system)
