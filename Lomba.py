@@ -252,9 +252,15 @@ class EnhancedEmergencyNLPSystem:
     def __init__(self, use_microphone=False):
         import speech_recognition as sr
         import pyttsx3
+
+        # Deteksi apakah berjalan di server (Render, Railway, dll)
+        is_server = bool(os.getenv("RENDER") or os.getenv("PORT"))
+
         self.recognizer = sr.Recognizer()
         self.microphone = None
-        if use_microphone:
+
+        # Hanya inisialisasi mikrofon jika diminta DAN tidak di server
+        if use_microphone and not is_server:
             try:
                 self.microphone = sr.Microphone()
                 print("✅ Microphone initialized (local mode)")
@@ -263,27 +269,37 @@ class EnhancedEmergencyNLPSystem:
                 self.microphone = None
         else:
             print("🔇 Microphone disabled (running on server)")
-        self.tts_engine = pyttsx3.init()
+
+        # Inisialisasi TTS hanya jika tidak di server
+        self.tts_engine = None
+        if not is_server:
+            try:
+                self.tts_engine = pyttsx3.init()
+                self.setup_tts()
+                print("🔊 TTS engine initialized (local mode)")
+            except Exception as e:
+                print(f"⚠️  TTS engine failed to initialize: {e}")
+                self.tts_engine = None
+        else:
+            print("🔇 TTS disabled (running on server)")
+
+        # Inisialisasi komponen lain yang tetap dibutuhkan di server
         self.db_manager = SupabasePostgreSQLManager()
         self.audio_queue = queue.Queue()
-        
+
         # Initialize Flask app with CORS support
         self.flask_app = Flask(__name__)
         CORS(self.flask_app)  # Enable CORS for all routes
-        
+
         self.setup_flask_routes()
-        
-        # Setup TTS voice
-        self.setup_tts()
-        
-        # Setup speech recognizer
+
+        # Setup speech recognizer settings (aman, tidak butuh hardware)
         self.recognizer.energy_threshold = 300
         self.recognizer.dynamic_energy_threshold = True
         self.recognizer.pause_threshold = 0.8
         self.recognizer.operation_timeout = None
         self.recognizer.phrase_threshold = 0.3
         self.recognizer.non_speaking_duration = 0.8
-
     def setup_tts(self):
         """Setup Text-to-Speech engine"""
         try:
