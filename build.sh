@@ -10,9 +10,6 @@ echo "Setting up environment variables..."
 export FLASK_APP=Lomba.py
 export FLASK_ENV=production
 
-# Create a temporary .env file for the build process
-echo "Creating temporary .env file..."
-cp .env.supabase.template .env
 
 # Remove unnecessary files
 echo "Cleaning up unnecessary files..."
