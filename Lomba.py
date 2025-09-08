@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from enum import Enum
 import threading
 import queue
-import os
+import os, sys
 import logging
 from flask import Flask, request, jsonify, make_response
 from twilio.rest import Client
@@ -294,9 +294,8 @@ class EnhancedEmergencyNLPSystem:
              origins=["*"],  # Allow all origins for development
              methods=["GET", "POST", "OPTIONS"],
              allow_headers=["Content-Type", "Authorization"])
-        # @self.flask_app.route('/webhook/whatsapp', methods=['POST'])
-        # def whatsapp_webhook():
-        #     return self.handle_whatsapp_message()
+
+        # Facebook webhook verification (GET)
         @self.flask_app.route('/webhook/whatsapp', methods=['GET'])
         def verify_webhook():
             """Verify Facebook webhook"""
@@ -306,14 +305,18 @@ class EnhancedEmergencyNLPSystem:
 
             if mode == 'subscribe' and token == FACEBOOK_WEBHOOK_VERIFY_TOKEN:
                 logger.info("Facebook webhook verified successfully")
-                return challenge
+                return challenge, 200
             else:
                 logger.error("Facebook webhook verification failed")
                 return "Verification failed", 403
+
+        # Facebook webhook for incoming messages (POST)
         @self.flask_app.route('/webhook/whatsapp', methods=['POST'])
         def facebook_webhook():
             return self.handle_facebook_webhook()
-        @app.route('/health', methods=['GET'])
+
+        # Health check endpoint - FIXED
+        @self.flask_app.route('/health', methods=['GET'])
         def health_check():
             """Health check endpoint for Render"""
             try:
@@ -332,17 +335,21 @@ class EnhancedEmergencyNLPSystem:
                     "database": db_status,
                     "openai": openai_status,
                     "environment": os.getenv("FLASK_ENV", "development"),
-                    "version": "1.0.0"
+                    "version": "1.0.0",
+                    "facebook_token_set": bool(FACEBOOK_ACCESS_TOKEN),
+                    "webhook_token_set": bool(FACEBOOK_WEBHOOK_VERIFY_TOKEN)
                 }), 200
                 
             except Exception as e:
+                logger.error(f"Health check error: {e}")
                 return jsonify({
-                    "status": "unhealthy",
+                    "status": "unhealthy", 
                     "error": str(e),
                     "timestamp": datetime.datetime.now().isoformat()
                 }), 500
         
-        @app.route('/', methods=['GET'])
+        # Root endpoint - FIXED
+        @self.flask_app.route('/', methods=['GET'])
         def index():
             """Root endpoint"""
             return jsonify({
@@ -353,26 +360,36 @@ class EnhancedEmergencyNLPSystem:
                     "json_api": "/webhook/whatsapp/json",
                     "health": "/health",
                     "reports": "/api/reports"
-                }
+                },
+                "facebook_integration": "active" if FACEBOOK_ACCESS_TOKEN else "inactive"
             })
         
-        @app.route('/api/reports', methods=['GET'])
+        # Reports API endpoint - FIXED
+        @self.flask_app.route('/api/reports', methods=['GET'])
         def get_reports():
             """API endpoint for reports"""
             try:
-                system = EnhancedEmergencyNLPSystem()
-                return system.get_reports_api()
+                return self.get_reports_api()
             except Exception as e:
+                logger.error(f"Reports API error: {e}")
                 return jsonify({"error": str(e)}), 500
         
-        # Add error handlers
-        @app.errorhandler(404)
+        # Add error handlers - FIXED
+        @self.flask_app.errorhandler(404)
         def not_found(error):
-            return jsonify({"error": "Endpoint not found"}), 404
+            logger.warning(f"404 error: {request.url}")
+            return jsonify({
+                "error": "Endpoint not found", 
+                "requested_path": request.path,
+                "available_endpoints": ["/", "/health", "/webhook/whatsapp", "/api/reports"]
+            }), 404
         
-        @app.errorhandler(500)
+        @self.flask_app.errorhandler(500)
         def internal_error(error):
+            logger.error(f"500 error: {error}")
             return jsonify({"error": "Internal server error"}), 500
+
+        # JSON-only endpoint for web clients (unchanged)
         @self.flask_app.route("/webhook/whatsapp/json", methods=["POST", "OPTIONS"])
         def handle_whatsapp_message_json():
             """JSON-only endpoint for web clients (Next.js) - Does NOT send WhatsApp messages"""
@@ -552,7 +569,7 @@ class EnhancedEmergencyNLPSystem:
                     "message": "Terjadi kesalahan internal sistem",
                     "timestamp": datetime.datetime.now().isoformat()
                 }), 500
-
+    
     def enhanced_speech_to_text(self, audio_file_path: str = None, audio_data = None) -> Optional[str]:
         """Enhanced speech recognition dengan multiple fallback"""
         methods = [
@@ -1975,7 +1992,7 @@ echo "📦 Installing Python dependencies..."
 pip install -r requirements.txt
 
 # Setup environment variables
-export FLASK_APP=emergency_nlp_system.py
+export FLASK_APP=Lomba.py
 export FLASK_ENV=production
 
 # Load environment variables dari .env file
@@ -1987,7 +2004,7 @@ fi
 # Test Supabase connection
 echo "🔗 Testing Supabase connection..."
 python -c "
-from emergency_nlp_system import SupabasePostgreSQLManager
+from Lomba import SupabasePostgreSQLManager
 manager = SupabasePostgreSQLManager()
 conn = manager.get_connection()
 if conn:
@@ -2000,7 +2017,7 @@ else:
 
 # Start the application
 echo "🔧 Starting Flask webhook server..."
-python emergency_nlp_system.py --mode server --port 5000 &
+python Lomba.py --mode server --port 5000 &
 
 echo "✅ Emergency NLP System started successfully!"
 echo "📱 WhatsApp webhook: http://your-domain:5000/webhook/whatsapp"
@@ -2154,8 +2171,78 @@ def main_enhanced():
                 logger.error(f"Main error: {e}")
                 print(f"❌ Error: {e}")
 
-app = Flask(__name__)
+
+def create_app():
+    """Factory function to create Flask app"""
+    system = EnhancedEmergencyNLPSystem()
+    return system.flask_app
+
+# Create the app instance that Gunicorn can find
+app = create_app()
+
 CORS(app)
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Health check endpoint for Render"""
+    try:
+        # Test database connection
+        system = EnhancedEmergencyNLPSystem()
+        conn = system.db_manager.get_connection()
+        db_status = "connected" if conn else "disconnected"
+        if conn:
+            conn.close()
+        
+        # Test OpenAI API
+        openai_status = "ok" if openai.api_key else "missing_key"
+        
+        return jsonify({
+            "status": "healthy",
+            "timestamp": datetime.datetime.now().isoformat(),
+            "database": db_status,
+            "openai": openai_status,
+            "environment": os.getenv("FLASK_ENV", "development"),
+            "version": "1.0.0"
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            "status": "unhealthy",
+            "error": str(e),
+            "timestamp": datetime.datetime.now().isoformat()
+        }), 500
+
+@app.route('/', methods=['GET'])
+def index():
+    """Root endpoint"""
+    return jsonify({
+        "service": "Emergency NLP System",
+        "status": "running",
+        "endpoints": {
+            "webhook": "/webhook/whatsapp",
+            "json_api": "/webhook/whatsapp/json", 
+            "health": "/health",
+            "reports": "/api/reports"
+        }
+    })
+
+@app.route('/api/reports', methods=['GET'])
+def get_reports():
+    """API endpoint for reports"""
+    try:
+        system = EnhancedEmergencyNLPSystem()
+        return system.get_reports_api()
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# Error handlers
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({"error": "Endpoint not found"}), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    return jsonify({"error": "Internal server error"}), 500
+
 if __name__ == "__main__":
     print("=" * 60)
     print("🚨 EMERGENCY NLP SYSTEM - SUPABASE ENHANCED VERSION")
@@ -2170,4 +2257,9 @@ if __name__ == "__main__":
     print("✅ Cloud Database Support")
     print("=" * 60)
     
-    main_enhanced()
+    # For development, run directly
+    if len(sys.argv) > 1 and sys.argv[1] == '--dev':
+        app.run(host='0.0.0.0', port=int(os.getenv('PORT', 5000)), debug=True)
+    else:
+        # For production, let Gunicorn handle it
+        main_enhanced()
