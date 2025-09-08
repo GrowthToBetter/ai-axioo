@@ -953,14 +953,14 @@ class EnhancedEmergencyNLPSystem:
                                                 args=(from_number, message_body, message_id, 'text')
                                             ).start()
                                         
-                                        # Handle voice message
+                                        # Handle voice note (audio)
                                         elif message.get('type') == 'audio':
                                             audio_data = message.get('audio', {})
                                             media_id = audio_data.get('id')
                                             media_url = self.get_facebook_media_url(media_id)
                                             threading.Thread(
                                                 target=self.process_facebook_message,
-                                                args=(from_number, '', message_id, 'voice', media_url)
+                                                args=(from_number, '', message_id, 'audio', media_url)
                                             ).start()
             
             return jsonify({"status": "ok"}), 200
@@ -968,27 +968,14 @@ class EnhancedEmergencyNLPSystem:
         except Exception as e:
             logger.error(f"Error handling Facebook webhook: {e}")
             return jsonify({"status": "error"}), 500
-    def get_facebook_media_url(self, media_id: str) -> str:
-        """Get media URL from Facebook API"""
-        try:
-            url = f"https://graph.facebook.com/v17.0/{media_id}"
-            headers = {'Authorization': f'Bearer {FACEBOOK_ACCESS_TOKEN}'}
-            
-            response = requests.get(url, headers=headers)
-            if response.status_code == 200:
-                return response.json().get('url', '')
-            
-        except Exception as e:
-            logger.error(f"Error getting Facebook media URL: {e}")
-        
-        return ''
+    
     
     def process_facebook_message(self, from_number: str, message_body: str, 
-                               message_id: str, message_type: str, media_url: str = None):
+                                 message_id: str, message_type: str, media_url: str = None):
         """Optimized Facebook WhatsApp message processing - SINGLE RESPONSE"""
         try:
-            # Handle voice message
-            if message_type == 'voice' and media_url:
+            # Handle voice note (audio)
+            if message_type == 'audio' and media_url:
                 transcribed_text = self.process_facebook_voice(media_url)
                 if transcribed_text:
                     message_body = transcribed_text
@@ -1029,7 +1016,7 @@ class EnhancedEmergencyNLPSystem:
                 description=message_body,
                 structured_data=extracted_info,
                 ai_recommendations=extracted_info.get('immediate_actions', []),
-                voice_file_path=media_url if message_type == "voice" else None
+                voice_file_path=media_url if message_type == "audio" else None
             )
             
             # Generate SINGLE optimized response
@@ -1061,6 +1048,23 @@ class EnhancedEmergencyNLPSystem:
                 from_number,
                 "🚨 Laporan diterima. Sistem sedang memproses. Tim teknis akan segera menindaklanjuti."
             )
+    
+    def get_facebook_media_url(self, media_id: str) -> str:
+        """Get media URL from Facebook API"""
+        try:
+            url = f"https://graph.facebook.com/v17.0/{media_id}"
+            headers = {'Authorization': f'Bearer {FACEBOOK_ACCESS_TOKEN}'}
+            
+            response = requests.get(url, headers=headers)
+            if response.status_code == 200:
+                return response.json().get('url', '')
+            
+        except Exception as e:
+            logger.error(f"Error getting Facebook media URL: {e}")
+        
+        return ''
+    
+
     def process_facebook_voice(self, media_url: str) -> str:
         """Process voice message from Facebook"""
         try:
