@@ -39,10 +39,59 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 client = openai.OpenAI(api_key=openai.api_key)
 
 # Konfigurasi Twilio untuk WhatsApp
-TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
-TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
-TWILIO_WHATSAPP_NUMBER = os.getenv("TWILIO_WHATSAPP_NUMBER")
-twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+# TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
+# TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+# TWILIO_WHATSAPP_NUMBER = os.getenv("TWILIO_WHATSAPP_NUMBER")
+# twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+FACEBOOK_ACCESS_TOKEN = os.getenv("FACEBOOK_ACCESS_TOKEN")
+FACEBOOK_PHONE_NUMBER_ID = os.getenv("FACEBOOK_PHONE_NUMBER_ID")
+FACEBOOK_WEBHOOK_VERIFY_TOKEN = os.getenv("FACEBOOK_WEBHOOK_VERIFY_TOKEN")
+
+class FacebookWhatsAppManager:
+    def __init__(self):
+        self.access_token = FACEBOOK_ACCESS_TOKEN
+        self.phone_number_id = FACEBOOK_PHONE_NUMBER_ID
+        self.base_url = f"https://graph.facebook.com/v17.0/{self.phone_number_id}/messages"
+        self.headers = {
+            'Authorization': f'Bearer {self.access_token}',
+            'Content-Type': 'application/json'
+        }
+    
+    def send_message(self, to_number: str, message: str) -> bool:
+        """Send WhatsApp message via Facebook API"""
+        try:
+            # Clean phone number (remove whatsapp: prefix if present)
+            clean_number = to_number.replace("whatsapp:", "").strip()
+            
+            payload = {
+                "messaging_product": "whatsapp",
+                "to": clean_number,
+                "type": "text",
+                "text": {
+                    "body": message
+                }
+            }
+            
+            response = requests.post(
+                self.base_url,
+                headers=self.headers,
+                json=payload,
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                logger.info(f"Facebook WhatsApp message sent to {clean_number}")
+                return True
+            else:
+                logger.error(f"Facebook API error: {response.status_code} - {response.text}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error sending Facebook WhatsApp message: {e}")
+            return False
+
+# Ganti inisialisasi Twilio dengan Facebook
+facebook_whatsapp = FacebookWhatsAppManager()
 
 # Konfigurasi Supabase PostgreSQL
 def parse_database_url(database_url: str) -> Dict[str, str]:
@@ -245,9 +294,25 @@ class EnhancedEmergencyNLPSystem:
              origins=["*"],  # Allow all origins for development
              methods=["GET", "POST", "OPTIONS"],
              allow_headers=["Content-Type", "Authorization"])
+        # @self.flask_app.route('/webhook/whatsapp', methods=['POST'])
+        # def whatsapp_webhook():
+        #     return self.handle_whatsapp_message()
+        @self.flask_app.route('/webhook/whatsapp', methods=['GET'])
+        def verify_webhook():
+            """Verify Facebook webhook"""
+            mode = request.args.get('hub.mode')
+            token = request.args.get('hub.verify_token')
+            challenge = request.args.get('hub.challenge')
+
+            if mode == 'subscribe' and token == FACEBOOK_WEBHOOK_VERIFY_TOKEN:
+                logger.info("Facebook webhook verified successfully")
+                return challenge
+            else:
+                logger.error("Facebook webhook verification failed")
+                return "Verification failed", 403
         @self.flask_app.route('/webhook/whatsapp', methods=['POST'])
-        def whatsapp_webhook():
-            return self.handle_whatsapp_message()
+        def facebook_webhook():
+            return self.handle_facebook_webhook()
         @self.flask_app.route("/webhook/whatsapp/json", methods=["POST", "OPTIONS"])
         def handle_whatsapp_message_json():
             """JSON-only endpoint for web clients (Next.js) - Does NOT send WhatsApp messages"""
@@ -750,302 +815,431 @@ class EnhancedEmergencyNLPSystem:
         finally:
             conn.close()
 
+    # def send_whatsapp_message(self, to_number: str, message: str) -> bool:
+    #     """Send WhatsApp message via Twilio - Only called for regular webhook requests"""
+    #     try:
+    #         logger.info(f"Sending WhatsApp message to {to_number}")
+    #         message = twilio_client.messages.create(
+    #             body=message,
+    #             from_=TWILIO_WHATSAPP_NUMBER,
+    #             to=f"whatsapp:{to_number}"
+    #         )
+            
+    #         logger.info(f"WhatsApp message sent to {to_number}: {message.sid}")
+    #         return True
+            
+    #     except Exception as e:
+    #         logger.error(f"Error sending WhatsApp message: {e}")
+    #         return False
     def send_whatsapp_message(self, to_number: str, message: str) -> bool:
-        """Send WhatsApp message via Twilio - Only called for regular webhook requests"""
+        """Send WhatsApp message via Facebook API - Only called for regular webhook requests"""
+        return facebook_whatsapp.send_message(to_number, message)
+    
+    # def handle_whatsapp_message(self):
+    #     """Handle incoming WhatsApp messages from Twilio webhook - SENDS WhatsApp messages"""
+    #     # Initialize response data structure
+    #     response_data = {
+    #         "status": "success",
+    #         "message": "",
+    #         "report_id": None,
+    #         "emergency_info": {},
+    #         "error": None
+    #     }
+
+    #     try:
+    #         # Get message data from Twilio webhook
+    #         message_sid = request.form.get('MessageSid')
+    #         from_number = request.form.get('From', '').replace('whatsapp:', '')
+    #         message_body = request.form.get('Body', '')
+    #         media_url = request.form.get('MediaUrl0')
+    #         media_content_type = request.form.get('MediaContentType0', '')
+
+    #         logger.info(f"WhatsApp webhook from {from_number}: {message_body[:100]}")
+
+    #         # Process voice message with improved handling
+    #         if media_url and 'audio' in media_content_type:
+    #             logger.info("Processing voice message...")
+
+    #             try:
+    #                 # Download voice file with proper authentication
+    #                 auth = (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+    #                 response = requests.get(media_url, auth=auth, timeout=30)
+
+    #                 if response.status_code == 200:
+    #                     # Create temporary files for processing
+    #                     with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as ogg_file:
+    #                         ogg_file.write(response.content)
+    #                         ogg_path = ogg_file.name
+
+    #                     # Convert OGG to WAV using OpenAI Whisper API directly
+    #                     try:
+    #                         # Use OpenAI Whisper API which can handle OGG files directly
+    #                         with open(ogg_path, 'rb') as audio_file:
+    #                             transcription = client.audio.transcriptions.create(
+    #                                 model="whisper-1",
+    #                                 file=audio_file,
+    #                                 language="id"  # Indonesian language
+    #                             )
+
+    #                         transcribed_text = transcription.text
+
+    #                         if transcribed_text and transcribed_text.strip():
+    #                             message_body = transcribed_text
+    #                             message_type = "voice"
+    #                             logger.info(f"Voice message transcribed successfully: {transcribed_text[:100]}...")
+    #                             response_data["transcribed_text"] = transcribed_text
+    #                         else:
+    #                             logger.warning("Voice transcription returned empty text")
+    #                             response_msg = "Maaf, tidak dapat memproses pesan suara. Silakan kirim pesan teks atau coba lagi."
+    #                             self.send_whatsapp_message(from_number, response_msg)  # SEND to WhatsApp
+    #                             response_data["status"] = "error"
+    #                             response_data["error"] = "Empty voice transcription"
+    #                             response_data["message"] = response_msg
+    #                             return str(MessagingResponse())
+
+    #                     except Exception as whisper_error:
+    #                         logger.error(f"Whisper transcription error: {whisper_error}")
+    #                         response_msg = "Maaf, tidak dapat memproses pesan suara. Silakan kirim pesan teks atau coba lagi."
+    #                         self.send_whatsapp_message(from_number, response_msg)  # SEND to WhatsApp
+    #                         response_data["status"] = "error"
+    #                         response_data["error"] = str(whisper_error)
+    #                         response_data["message"] = response_msg
+    #                         return str(MessagingResponse())
+
+    #                     finally:
+    #                         # Clean up temporary file
+    #                         if os.path.exists(ogg_path):
+    #                             try:
+    #                                 os.unlink(ogg_path)
+    #                             except Exception as e:
+    #                                 logger.warning(f"Failed to delete temp file {ogg_path}: {e}")
+
+    #                 else:
+    #                     logger.error(f"Failed to download voice message: HTTP {response.status_code}")
+    #                     response_msg = "Maaf, gagal mengunduh pesan suara. Silakan coba kirim ulang atau gunakan pesan teks."
+    #                     self.send_whatsapp_message(from_number, response_msg)  # SEND to WhatsApp
+    #                     response_data["status"] = "error"
+    #                     response_data["error"] = f"Failed to download voice message: HTTP {response.status_code}"
+    #                     response_data["message"] = response_msg
+    #                     return str(MessagingResponse())
+
+    #             except requests.exceptions.RequestException as e:
+    #                 logger.error(f"Error downloading voice message: {e}")
+    #                 response_msg = "Maaf, terjadi kesalahan saat memproses pesan suara. Silakan kirim pesan teks."
+    #                 self.send_whatsapp_message(from_number, response_msg)  # SEND to WhatsApp
+    #                 response_data["status"] = "error"
+    #                 response_data["error"] = str(e)
+    #                 response_data["message"] = response_msg
+    #                 return str(MessagingResponse())
+
+    #         else:
+    #             message_type = "text"
+
+    #         # Process emergency report only if we have message content
+    #         if message_body and message_body.strip():
+    #             context = {
+    #                 "source": "whatsapp",
+    #                 "phone_number": from_number,
+    #                 "message_type": message_type
+    #             }
+
+    #             # Create emergency report
+    #             extracted_info = self.extract_emergency_info_enhanced(message_body, context)
+
+    #             report_id = f"WA{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
+
+    #             report = EmergencyReport(
+    #                 id=report_id,
+    #                 timestamp=datetime.datetime.now(),
+    #                 caller_info=f"WhatsApp: {from_number}",
+    #                 caller_phone=from_number,
+    #                 location=extracted_info.get('location', {}).get('raw_location', 'Tidak diketahui'),
+    #                 emergency_type=EmergencyType(extracted_info.get('emergency_type', 'lainnya')),
+    #                 urgency_level=UrgencyLevel(extracted_info.get('urgency_level', 3)),
+    #                 description=message_body,
+    #                 structured_data=extracted_info,
+    #                 ai_recommendations=extracted_info.get('immediate_actions', []),
+    #                 voice_file_path=media_url if message_type == "voice" else None
+    #             )
+
+    #             # Save to database
+    #             success = self.save_report_to_postgresql(report)
+    #             self.save_whatsapp_conversation(
+    #                 from_number, message_body, message_sid, 
+    #                 message_type, media_url, report_id
+    #             )
+
+    #             # Generate comprehensive step-by-step response
+    #             response_text = self.generate_comprehensive_emergency_response(
+    #                 extracted_info, message_body, report_id, from_number
+    #             )
+
+    #             # Send response via WhatsApp (for regular webhook endpoint)
+    #             self.send_comprehensive_response_parts(from_number, response_text, report_id)
+
+    #             # Update response sent status
+    #             if success:
+    #                 self.update_report_response_status(report_id, True)
+
+    #             # Populate response data
+    #             response_data["status"] = "success"
+    #             response_data["message"] = "Response sent via WhatsApp"
+    #             response_data["report_id"] = report_id
+    #             response_data["emergency_info"] = {
+    #                 "emergency_type": extracted_info.get('emergency_type', 'lainnya'),
+    #                 "urgency_level": extracted_info.get('urgency_level', 3),
+    #                 "location": extracted_info.get('location', {}).get('raw_location', 'Tidak diketahui'),
+    #                 "immediate_actions": extracted_info.get('immediate_actions', []),
+    #                 "caller_phone": from_number,
+    #                 "message_type": message_type
+    #             }
+
+    #         else:
+    #             # Handle empty message case
+    #             logger.warning(f"Empty message received from {from_number}")
+    #             response_msg = "Maaf, pesan kosong diterima. Silakan kirim laporan darurat Anda dengan detail yang jelas."
+    #             self.send_whatsapp_message(from_number, response_msg)  # SEND to WhatsApp
+    #             response_data["status"] = "error"
+    #             response_data["error"] = "Empty message received"
+    #             response_data["message"] = response_msg
+
+    #         return str(MessagingResponse())
+
+    #     except Exception as e:
+    #         logger.error(f"Error handling WhatsApp message: {e}")
+    #         error_response = "Terjadi kesalahan sistem. Tim teknis akan segera menindaklanjuti laporan Anda."
+    #         try:
+    #             # Try to get phone number for error response
+    #             from_number = request.form.get('From', '').replace('whatsapp:', '')
+    #             if from_number:
+    #                 self.send_whatsapp_message(from_number, error_response)  # SEND to WhatsApp
+    #         except Exception as send_error:
+    #             logger.error(f"Failed to send error response: {send_error}")
+
+    #         response_data["status"] = "error"
+    #         response_data["error"] = str(e)
+    #         response_data["message"] = error_response
+
+    #         return str(MessagingResponse().message(error_response))
+    def handle_facebook_webhook(self):
+        """Optimized Facebook webhook handler"""
         try:
-            logger.info(f"Sending WhatsApp message to {to_number}")
-            message = twilio_client.messages.create(
-                body=message,
-                from_=TWILIO_WHATSAPP_NUMBER,
-                to=f"whatsapp:{to_number}"
+            data = request.get_json()
+            
+            if not data:
+                return jsonify({"status": "ok"}), 200
+            
+            # Process messages efficiently
+            if 'entry' in data:
+                for entry in data['entry']:
+                    if 'changes' in entry:
+                        for change in entry['changes']:
+                            if change.get('field') == 'messages':
+                                value = change.get('value', {})
+                                
+                                if 'messages' in value:
+                                    for message in value['messages']:
+                                        from_number = message.get('from')
+                                        message_id = message.get('id')
+                                        
+                                        # Handle text message
+                                        if message.get('type') == 'text':
+                                            message_body = message.get('text', {}).get('body', '')
+                                            # Process in background to avoid blocking webhook
+                                            threading.Thread(
+                                                target=self.process_facebook_message,
+                                                args=(from_number, message_body, message_id, 'text')
+                                            ).start()
+                                        
+                                        # Handle voice message
+                                        elif message.get('type') == 'audio':
+                                            audio_data = message.get('audio', {})
+                                            media_id = audio_data.get('id')
+                                            media_url = self.get_facebook_media_url(media_id)
+                                            threading.Thread(
+                                                target=self.process_facebook_message,
+                                                args=(from_number, '', message_id, 'voice', media_url)
+                                            ).start()
+            
+            return jsonify({"status": "ok"}), 200
+            
+        except Exception as e:
+            logger.error(f"Error handling Facebook webhook: {e}")
+            return jsonify({"status": "error"}), 500
+    def get_facebook_media_url(self, media_id: str) -> str:
+        """Get media URL from Facebook API"""
+        try:
+            url = f"https://graph.facebook.com/v17.0/{media_id}"
+            headers = {'Authorization': f'Bearer {FACEBOOK_ACCESS_TOKEN}'}
+            
+            response = requests.get(url, headers=headers)
+            if response.status_code == 200:
+                return response.json().get('url', '')
+            
+        except Exception as e:
+            logger.error(f"Error getting Facebook media URL: {e}")
+        
+        return ''
+    
+    def process_facebook_message(self, from_number: str, message_body: str, 
+                               message_id: str, message_type: str, media_url: str = None):
+        """Optimized Facebook WhatsApp message processing - SINGLE RESPONSE"""
+        try:
+            # Handle voice message
+            if message_type == 'voice' and media_url:
+                transcribed_text = self.process_facebook_voice(media_url)
+                if transcribed_text:
+                    message_body = transcribed_text
+                else:
+                    self.send_whatsapp_message(
+                        from_number, 
+                        "Maaf, tidak dapat memproses pesan suara. Silakan kirim pesan teks."
+                    )
+                    return
+            
+            if not message_body.strip():
+                self.send_whatsapp_message(
+                    from_number,
+                    "Maaf, pesan kosong diterima. Silakan kirim laporan darurat Anda."
+                )
+                return
+            
+            # Single processing and response generation
+            context = {
+                "source": "facebook_whatsapp",
+                "phone_number": from_number,
+                "message_type": message_type
+            }
+            
+            # Extract info and create report in one flow
+            extracted_info = self.extract_emergency_info_enhanced(message_body, context)
+            report_id = f"FB{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
+            
+            # Create report
+            report = EmergencyReport(
+                id=report_id,
+                timestamp=datetime.datetime.now(),
+                caller_info=f"Facebook WhatsApp: {from_number}",
+                caller_phone=from_number,
+                location=extracted_info.get('location', {}).get('raw_location', 'Tidak diketahui'),
+                emergency_type=EmergencyType(extracted_info.get('emergency_type', 'lainnya')),
+                urgency_level=UrgencyLevel(extracted_info.get('urgency_level', 3)),
+                description=message_body,
+                structured_data=extracted_info,
+                ai_recommendations=extracted_info.get('immediate_actions', []),
+                voice_file_path=media_url if message_type == "voice" else None
             )
             
-            logger.info(f"WhatsApp message sent to {to_number}: {message.sid}")
-            return True
+            # Generate SINGLE optimized response
+            response_text = self.generate_optimized_emergency_response(
+                extracted_info, message_body, report_id, from_number
+            )
             
-        except Exception as e:
-            logger.error(f"Error sending WhatsApp message: {e}")
-            return False
-    
-    def handle_whatsapp_message(self):
-        """Handle incoming WhatsApp messages from Twilio webhook - SENDS WhatsApp messages"""
-        # Initialize response data structure
-        response_data = {
-            "status": "success",
-            "message": "",
-            "report_id": None,
-            "emergency_info": {},
-            "error": None
-        }
-
-        try:
-            # Get message data from Twilio webhook
-            message_sid = request.form.get('MessageSid')
-            from_number = request.form.get('From', '').replace('whatsapp:', '')
-            message_body = request.form.get('Body', '')
-            media_url = request.form.get('MediaUrl0')
-            media_content_type = request.form.get('MediaContentType0', '')
-
-            logger.info(f"WhatsApp webhook from {from_number}: {message_body[:100]}")
-
-            # Process voice message with improved handling
-            if media_url and 'audio' in media_content_type:
-                logger.info("Processing voice message...")
-
-                try:
-                    # Download voice file with proper authentication
-                    auth = (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-                    response = requests.get(media_url, auth=auth, timeout=30)
-
-                    if response.status_code == 200:
-                        # Create temporary files for processing
-                        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as ogg_file:
-                            ogg_file.write(response.content)
-                            ogg_path = ogg_file.name
-
-                        # Convert OGG to WAV using OpenAI Whisper API directly
-                        try:
-                            # Use OpenAI Whisper API which can handle OGG files directly
-                            with open(ogg_path, 'rb') as audio_file:
-                                transcription = client.audio.transcriptions.create(
-                                    model="whisper-1",
-                                    file=audio_file,
-                                    language="id"  # Indonesian language
-                                )
-
-                            transcribed_text = transcription.text
-
-                            if transcribed_text and transcribed_text.strip():
-                                message_body = transcribed_text
-                                message_type = "voice"
-                                logger.info(f"Voice message transcribed successfully: {transcribed_text[:100]}...")
-                                response_data["transcribed_text"] = transcribed_text
-                            else:
-                                logger.warning("Voice transcription returned empty text")
-                                response_msg = "Maaf, tidak dapat memproses pesan suara. Silakan kirim pesan teks atau coba lagi."
-                                self.send_whatsapp_message(from_number, response_msg)  # SEND to WhatsApp
-                                response_data["status"] = "error"
-                                response_data["error"] = "Empty voice transcription"
-                                response_data["message"] = response_msg
-                                return str(MessagingResponse())
-
-                        except Exception as whisper_error:
-                            logger.error(f"Whisper transcription error: {whisper_error}")
-                            response_msg = "Maaf, tidak dapat memproses pesan suara. Silakan kirim pesan teks atau coba lagi."
-                            self.send_whatsapp_message(from_number, response_msg)  # SEND to WhatsApp
-                            response_data["status"] = "error"
-                            response_data["error"] = str(whisper_error)
-                            response_data["message"] = response_msg
-                            return str(MessagingResponse())
-
-                        finally:
-                            # Clean up temporary file
-                            if os.path.exists(ogg_path):
-                                try:
-                                    os.unlink(ogg_path)
-                                except Exception as e:
-                                    logger.warning(f"Failed to delete temp file {ogg_path}: {e}")
-
-                    else:
-                        logger.error(f"Failed to download voice message: HTTP {response.status_code}")
-                        response_msg = "Maaf, gagal mengunduh pesan suara. Silakan coba kirim ulang atau gunakan pesan teks."
-                        self.send_whatsapp_message(from_number, response_msg)  # SEND to WhatsApp
-                        response_data["status"] = "error"
-                        response_data["error"] = f"Failed to download voice message: HTTP {response.status_code}"
-                        response_data["message"] = response_msg
-                        return str(MessagingResponse())
-
-                except requests.exceptions.RequestException as e:
-                    logger.error(f"Error downloading voice message: {e}")
-                    response_msg = "Maaf, terjadi kesalahan saat memproses pesan suara. Silakan kirim pesan teks."
-                    self.send_whatsapp_message(from_number, response_msg)  # SEND to WhatsApp
-                    response_data["status"] = "error"
-                    response_data["error"] = str(e)
-                    response_data["message"] = response_msg
-                    return str(MessagingResponse())
-
-            else:
-                message_type = "text"
-
-            # Process emergency report only if we have message content
-            if message_body and message_body.strip():
-                context = {
-                    "source": "whatsapp",
-                    "phone_number": from_number,
-                    "message_type": message_type
-                }
-
-                # Create emergency report
-                extracted_info = self.extract_emergency_info_enhanced(message_body, context)
-
-                report_id = f"WA{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
-
-                report = EmergencyReport(
-                    id=report_id,
-                    timestamp=datetime.datetime.now(),
-                    caller_info=f"WhatsApp: {from_number}",
-                    caller_phone=from_number,
-                    location=extracted_info.get('location', {}).get('raw_location', 'Tidak diketahui'),
-                    emergency_type=EmergencyType(extracted_info.get('emergency_type', 'lainnya')),
-                    urgency_level=UrgencyLevel(extracted_info.get('urgency_level', 3)),
-                    description=message_body,
-                    structured_data=extracted_info,
-                    ai_recommendations=extracted_info.get('immediate_actions', []),
-                    voice_file_path=media_url if message_type == "voice" else None
-                )
-
-                # Save to database
+            # Save to database (async to not block response)
+            try:
                 success = self.save_report_to_postgresql(report)
                 self.save_whatsapp_conversation(
-                    from_number, message_body, message_sid, 
+                    from_number, message_body, message_id, 
                     message_type, media_url, report_id
                 )
-
-                # Generate comprehensive step-by-step response
-                response_text = self.generate_comprehensive_emergency_response(
-                    extracted_info, message_body, report_id, from_number
-                )
-
-                # Send response via WhatsApp (for regular webhook endpoint)
-                self.send_comprehensive_response_parts(from_number, response_text, report_id)
-
-                # Update response sent status
                 if success:
                     self.update_report_response_status(report_id, True)
-
-                # Populate response data
-                response_data["status"] = "success"
-                response_data["message"] = "Response sent via WhatsApp"
-                response_data["report_id"] = report_id
-                response_data["emergency_info"] = {
-                    "emergency_type": extracted_info.get('emergency_type', 'lainnya'),
-                    "urgency_level": extracted_info.get('urgency_level', 3),
-                    "location": extracted_info.get('location', {}).get('raw_location', 'Tidak diketahui'),
-                    "immediate_actions": extracted_info.get('immediate_actions', []),
-                    "caller_phone": from_number,
-                    "message_type": message_type
-                }
-
-            else:
-                # Handle empty message case
-                logger.warning(f"Empty message received from {from_number}")
-                response_msg = "Maaf, pesan kosong diterima. Silakan kirim laporan darurat Anda dengan detail yang jelas."
-                self.send_whatsapp_message(from_number, response_msg)  # SEND to WhatsApp
-                response_data["status"] = "error"
-                response_data["error"] = "Empty message received"
-                response_data["message"] = response_msg
-
-            return str(MessagingResponse())
-
+            except Exception as db_error:
+                logger.error(f"Database save error: {db_error}")
+                # Don't let DB errors block emergency response
+            
+            # Send SINGLE response
+            self.send_whatsapp_message(from_number, response_text)
+            logger.info(f"Single optimized response sent to {from_number} for report {report_id}")
+            
         except Exception as e:
-            logger.error(f"Error handling WhatsApp message: {e}")
-            error_response = "Terjadi kesalahan sistem. Tim teknis akan segera menindaklanjuti laporan Anda."
-            try:
-                # Try to get phone number for error response
-                from_number = request.form.get('From', '').replace('whatsapp:', '')
-                if from_number:
-                    self.send_whatsapp_message(from_number, error_response)  # SEND to WhatsApp
-            except Exception as send_error:
-                logger.error(f"Failed to send error response: {send_error}")
-
-            response_data["status"] = "error"
-            response_data["error"] = str(e)
-            response_data["message"] = error_response
-
-            return str(MessagingResponse().message(error_response))
-    
-    def generate_comprehensive_emergency_response(self, extracted_info: Dict, original_text: str, report_id: str, phone_number: str) -> Dict:
-        """Generate comprehensive step-by-step emergency response using GPT-4"""
-
+            logger.error(f"Error processing Facebook message: {e}")
+            # Simple error response
+            self.send_whatsapp_message(
+                from_number,
+                "🚨 Laporan diterima. Sistem sedang memproses. Tim teknis akan segera menindaklanjuti."
+            )
+    def process_facebook_voice(self, media_url: str) -> str:
+        """Process voice message from Facebook"""
+        try:
+            # Download voice file with Facebook authentication
+            headers = {'Authorization': f'Bearer {FACEBOOK_ACCESS_TOKEN}'}
+            response = requests.get(media_url, headers=headers, timeout=30)
+            
+            if response.status_code == 200:
+                with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp_file:
+                    tmp_file.write(response.content)
+                    temp_path = tmp_file.name
+                
+                # Use OpenAI Whisper for transcription
+                try:
+                    with open(temp_path, 'rb') as audio_file:
+                        transcription = client.audio.transcriptions.create(
+                            model="whisper-1",
+                            file=audio_file,
+                            language="id"
+                        )
+                    
+                    return transcription.text
+                    
+                finally:
+                    if os.path.exists(temp_path):
+                        os.unlink(temp_path)
+            
+        except Exception as e:
+            logger.error(f"Error processing Facebook voice: {e}")
+        
+        return None
+        
+    def generate_optimized_emergency_response(self, extracted_info: Dict, original_text: str, report_id: str, phone_number: str) -> str:
+        """Generate single optimized emergency response for WhatsApp"""
+        
         system_prompt = """
-        Anda adalah operator darurat profesional Indonesia yang sangat berpengalaman. 
-
-        Tugas Anda adalah memberikan panduan darurat yang KOMPREHENSIF dan STEP-BY-STEP untuk situasi yang dilaporkan.
-
-        Berikan respons dalam format JSON dengan struktur berikut:
-        {
-            "immediate_response": "respons segera singkat untuk menenangkan pelapor (maks 100 karakter)",
-            "situation_assessment": "penilaian situasi berdasarkan laporan",
-            "immediate_safety_steps": [
-                "langkah keselamatan segera yang harus dilakukan SEKARANG (step-by-step, maksimal 5 langkah)"
-            ],
-            "detailed_instructions": {
-                "do_immediately": [
-                    "tindakan yang harus dilakukan segera (detail dan spesifik)"
-                ],
-                "do_not_do": [
-                    "hal-hal yang TIDAK boleh dilakukan (untuk keselamatan)"
-                ],
-                "if_situation_worsens": [
-                    "langkah-langkah jika situasi memburuk"
-                ]
-            },
-            "medical_first_aid": [
-                "panduan pertolongan pertama jika ada korban (step-by-step)"
-            ],
-            "contact_emergency_services": {
-                "when_to_call": "kapan harus menghubungi layanan darurat",
-                "what_to_tell_them": "informasi yang harus disampaikan ke petugas",
-                "numbers": ["112", "nomor layanan darurat spesifik lainnya"]
-            },
-            "evacuation_guidance": {
-                "should_evacuate": "apakah perlu evakuasi (ya/tidak/tergantung)",
-                "evacuation_route": "rute evakuasi yang disarankan",
-                "safe_meeting_point": "titik kumpul yang aman",
-                "what_to_bring": ["barang-barang penting yang harus dibawa"]
-            },
-            "communication_plan": {
-                "inform_family": "cara menginformasikan keluarga/orang terdekat",
-                "stay_connected": "cara tetap terhubung dengan tim darurat",
-                "updates": "bagaimana mendapatkan update situasi"
-            },
-            "psychological_support": [
-                "cara menenangkan diri dan orang lain di lokasi"
-            ],
-            "follow_up_actions": [
-                "tindakan lanjutan setelah situasi darurat mereda"
-            ],
-            "prevention_tips": [
-                "tips mencegah kejadian serupa di masa depan"
-            ]
-        }
-
-        PENTING:
-        - Gunakan bahasa Indonesia yang jelas dan mudah dipahami
-        - Berikan instruksi yang spesifik dan actionable
-        - Pertimbangkan kondisi Indonesia (geografis, infrastruktur, budaya)
-        - Prioritaskan keselamatan jiwa di atas segalanya
-        - Berikan instruksi yang realistis dan dapat dilakukan oleh masyarakat umum
-        - Sesuaikan dengan tingkat urgensi dan jenis darurat yang dilaporkan
+        Anda adalah operator darurat profesional Indonesia. Berikan respons WhatsApp yang:
+        
+        1. SATU PESAN LENGKAP (maksimal 500 karakter untuk WhatsApp)
+        2. Struktur terorganisir dengan emoji sebagai separator
+        3. Informasi prioritas: konfirmasi → tindakan segera → kontak darurat → nomor laporan
+        4. Bahasa Indonesia yang jelas dan menenangkan
+        5. Actionable dan tidak membuang waktu
+        
+        Format respons:
+        🚨 [Konfirmasi singkat situasi]
+        
+        ⚡ SEGERA:
+        • [1-3 tindakan paling penting]
+        
+        📞 Darurat: 112
+        📝 No: [report_id]
+        
+        Tim sedang menindaklanjuti. Tetap aman!
         """
-
+        
         urgency_level = extracted_info.get('urgency_level', 3)
         emergency_type = extracted_info.get('emergency_type', 'lainnya')
         location_info = extracted_info.get('location', {})
-        victims_info = extracted_info.get('victims_info', {})
-        incident_details = extracted_info.get('incident_details', {})
-
+        immediate_actions = extracted_info.get('immediate_actions', [])
+        
+        # Prioritize actions based on urgency and type
+        priority_actions = immediate_actions[:3] if immediate_actions else [
+            "tetap tenang dan aman",
+            "jauhi area berbahaya", 
+            "tunggu bantuan"
+        ]
+        
         user_prompt = f"""
-        LAPORAN DARURAT:
-        {original_text}
-
-        ANALISIS SISTEM:
-        - Jenis Darurat: {emergency_type}
-        - Tingkat Urgensi: {urgency_level}/5
-        - Lokasi: {location_info.get('raw_location', 'tidak diketahui')}
-        - Landmark: {location_info.get('landmarks', [])}
-        - Korban: {victims_info.get('count', 'tidak diketahui')} orang
-        - Kondisi Korban: {victims_info.get('condition', 'tidak diketahui')}
-        - Skala Kejadian: {incident_details.get('scale', 'tidak diketahui')}
-        - Waktu Kejadian: {incident_details.get('when', 'tidak disebutkan')}
-        - Penyebab: {incident_details.get('cause', 'tidak diketahui')}
-
-        Nomor Laporan: {report_id}
-        Nomor Telepon Pelapor: {phone_number}
-
-        Berikan panduan darurat yang SANGAT KOMPREHENSIF dan STEP-BY-STEP untuk situasi ini.
+        DARURAT: {original_text}
+        
+        Data:
+        - Jenis: {emergency_type}
+        - Urgensi: {urgency_level}/5
+        - Lokasi: {location_info.get('raw_location', 'tidak spesifik')}
+        - Tindakan: {priority_actions}
+        - No. Laporan: {report_id}
+        
+        Buat respons WhatsApp yang lengkap dalam 1 pesan saja.
         """
-
+        
         try:
             response = client.chat.completions.create(
                 model="gpt-4",
@@ -1053,31 +1247,26 @@ class EnhancedEmergencyNLPSystem:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=0.1,  # Low temperature for consistent, reliable responses
-                max_tokens=2000
+                temperature=0.2,
+                max_tokens=300
             )
-
-            result = response.choices[0].message.content.strip()
-            if result.startswith("```json"):
-                result = result.replace("```json", "").replace("```", "").strip()
-
-            comprehensive_response = json.loads(result)
-
-            # Add report metadata
-            comprehensive_response["report_metadata"] = {
-                "report_id": report_id,
-                "timestamp": datetime.datetime.now().isoformat(),
-                "emergency_type": emergency_type,
-                "urgency_level": urgency_level,
-                "phone_number": phone_number
-            }
-
-            return comprehensive_response
-
+            
+            return response.choices[0].message.content.strip()
+            
         except Exception as e:
-            logger.error(f"Error generating comprehensive emergency response: {e}")
-            return self.get_fallback_comprehensive_response(report_id, emergency_type, urgency_level)
+            logger.error(f"Error generating optimized response: {e}")
+            # Fallback response
+            return f"""🚨 Laporan darurat {emergency_type} diterima
 
+⚡ SEGERA:
+• Tetap tenang dan pastikan keselamatan
+• Jauhi area berbahaya
+• Ikuti instruksi petugas jika ada
+
+📞 Darurat: 112
+📝 No: {report_id}
+
+Tim sedang menindaklanjuti. Tetap aman!"""
     def get_fallback_comprehensive_response(self, report_id: str, emergency_type: str, urgency_level: int) -> Dict:
         """Fallback comprehensive response ketika GPT gagal"""
         return {
@@ -1159,172 +1348,79 @@ class EnhancedEmergencyNLPSystem:
             }
         }
 
-    def send_comprehensive_response_parts(self, phone_number: str, comprehensive_response: Dict, report_id: str):
-        """Send comprehensive response in multiple parts to avoid WhatsApp message length limits"""
+    def generate_optimized_emergency_response(
+        self,
+        extracted_info: Dict,
+        original_text: str,
+        report_id: str,
+        phone_number: str
+    ) -> str:
+        """Generate single optimized emergency response for WhatsApp sesuai regulasi"""
 
-        try:
-            # Part 1: Immediate Response and Assessment
-            part1 = f"""🚨 RESPON DARURAT - {report_id}
-
-    {comprehensive_response['immediate_response']}
-
-    📋 PENILAIAN SITUASI:
-    {comprehensive_response['situation_assessment']}
-
-    ⚡ LANGKAH KESELAMATAN SEGERA:"""
-
-            for i, step in enumerate(comprehensive_response['immediate_safety_steps'], 1):
-                part1 += f"\n{i}. {step}"
-
-            self.send_whatsapp_message(phone_number, part1)
-
-            # Small delay between messages
-            import time
-            time.sleep(1)
-
-            # Part 2: Detailed Instructions
-            part2 = f"""📝 PANDUAN DETAIL - {report_id}
-
-    ✅ LAKUKAN SEGERA:"""
-            for i, action in enumerate(comprehensive_response['detailed_instructions']['do_immediately'], 1):
-                part2 += f"\n{i}. {action}"
-
-            part2 += f"\n\n❌ JANGAN LAKUKAN:"
-            for i, dont in enumerate(comprehensive_response['detailed_instructions']['do_not_do'], 1):
-                part2 += f"\n{i}. {dont}"
-
-            self.send_whatsapp_message(phone_number, part2)
-            time.sleep(1)
-
-            # Part 3: Medical and Emergency Contacts
-            part3 = f"""🏥 PERTOLONGAN PERTAMA - {report_id}
-
-    JIKA ADA KORBAN:"""
-            for i, aid in enumerate(comprehensive_response['medical_first_aid'], 1):
-                part3 += f"\n{i}. {aid}"
-
-            contact_info = comprehensive_response['contact_emergency_services']
-            part3 += f"\n\n📞 HUBUNGI DARURAT:"
-            part3 += f"\n• Kapan: {contact_info['when_to_call']}"
-            part3 += f"\n• Nomor: {', '.join(contact_info['numbers'])}"
-            part3 += f"\n• Sampaikan: {contact_info['what_to_tell_them']}"
-
-            self.send_whatsapp_message(phone_number, part3)
-            time.sleep(1)
-
-            # Part 4: Evacuation and Communication
-            evac_info = comprehensive_response['evacuation_guidance']
-            comm_info = comprehensive_response['communication_plan']
-
-            part4 = f"""🚪 PANDUAN EVAKUASI - {report_id}
-
-    Perlu Evakuasi: {evac_info['should_evacuate']}
-    Rute: {evac_info['evacuation_route']}
-    Titik Kumpul: {evac_info['safe_meeting_point']}
-
-    Bawa: {', '.join(evac_info['what_to_bring'])}
-
-    📱 KOMUNIKASI:
-    • Keluarga: {comm_info['inform_family']}
-    • Update: {comm_info['updates']}"""
-
-            self.send_whatsapp_message(phone_number, part4)
-            time.sleep(1)
-
-            # Part 5: Psychological Support and Follow-up
-            part5 = f"""🧠 DUKUNGAN PSIKOLOGIS - {report_id}
-
-    TETAP TENANG:"""
-            for i, support in enumerate(comprehensive_response['psychological_support'], 1):
-                part5 += f"\n{i}. {support}"
-
-            part5 += f"\n\nTINDAKAN LANJUTAN:"
-            for i, followup in enumerate(comprehensive_response['follow_up_actions'][:3], 1):
-                part5 += f"\n{i}. {followup}"
-
-            part5 += f"\n\n📋 No. Laporan: {report_id}"
-            part5 += f"\n🚨 Darurat: 112"
-            part5 += f"\n⏰ {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}"
-
-            self.send_whatsapp_message(phone_number, part5)
-
-            # Optional: Send prevention tips as final message after delay
-            time.sleep(2)
-            prevention_msg = f"💡 TIPS PENCEGAHAN - {report_id}\n\n"
-            for i, tip in enumerate(comprehensive_response['prevention_tips'][:3], 1):
-                prevention_msg += f"{i}. {tip}\n"
-
-            prevention_msg += "\nTim darurat telah menerima laporan Anda dan akan segera menindaklanjuti. Tetap aman! 🙏"
-
-            self.send_whatsapp_message(phone_number, prevention_msg)
-
-            logger.info(f"Comprehensive emergency response sent to {phone_number} for report {report_id}")
-
-        except Exception as e:
-            logger.error(f"Error sending comprehensive response parts: {e}")
-            # Send fallback single message
-            fallback_msg = f"""🚨 DARURAT - {report_id}
-
-    Laporan Anda telah diterima dan sedang ditindaklanjuti.
-
-    LANGKAH SEGERA:
-    1. Tetap tenang dan aman
-    2. Hubungi 112 jika kritis
-    3. Ikuti panduan keselamatan umum
-    4. Tunggu tim darurat
-
-    No. Laporan: {report_id}
-    Darurat: 112"""
-
-            self.send_whatsapp_message(phone_number, fallback_msg)
-    def generate_whatsapp_response(self, extracted_info: Dict, original_text: str, report_id: str) -> str:
-        """Generate response untuk WhatsApp"""
         system_prompt = """
-        Anda adalah operator darurat profesional via WhatsApp.
-        Berikan respons yang:
-        1. Singkat tapi informatif (maksimal 160 karakter untuk SMS, 300 untuk WhatsApp)
-        2. Menenangkan dan memberikan arahan jelas
-        3. Menyertakan nomor laporan
-        4. Menggunakan emoji yang tepat untuk WhatsApp
-        5. Bahasa Indonesia yang mudah dipahami
+        Anda adalah operator darurat profesional Indonesia. Berikan respons WhatsApp yang:
+
+        1. SATU PESAN LENGKAP (maksimal 500 karakter)
+        2. Struktur terorganisir dengan emoji sebagai separator
+        3. Prioritas: konfirmasi → langkah segera → nomor darurat resmi → nomor laporan
+        4. Bahasa Indonesia yang jelas, menenangkan, dan actionable
+        5. Sesuai regulasi (Permenkominfo No.10/2016, Permenkes No.19/2016, UU No.24/2007)
+
+        Format respons:
+        🚨 [Konfirmasi singkat situasi]
+
+        ⚡ SEGERA:
+        • [1-3 tindakan penting sesuai konteks]
+        • [Nomor darurat spesifik bila perlu]
+
+        📞 Darurat: 112 (umum) · 119 (medis) · 110 (polisi)
+        📝 No: [report_id]
+
+        Tim resmi sedang menindaklanjuti. Tetap aman!
         """
-        
-        urgency = extracted_info.get('urgency_level', 3)
-        emergency_type = extracted_info.get('emergency_type', 'lainnya')
-        location = extracted_info.get('location', {}).get('raw_location', 'lokasi Anda')
-        
-        prompt = f"""
-        Info darurat:
+
+        urgency_level = extracted_info.get("urgency_level", 3)
+        emergency_type = extracted_info.get("emergency_type", "lainnya")
+        location_info = extracted_info.get("location", {})
+        immediate_actions = extracted_info.get("immediate_actions", [])
+
+        # Tentukan tindakan prioritas (maks 3)
+        priority_actions = immediate_actions[:3] if immediate_actions else [
+            "Tetap tenang & amankan diri",
+            "Jauhi sumber bahaya",
+            "Hubungi 112 bila kondisi memburuk"
+        ]
+
+        user_prompt = f"""
+        DARURAT: {original_text}
+
+        Data:
         - Jenis: {emergency_type}
-        - Urgensi: {urgency}/5
-        - Lokasi: {location}
-        - Nomor laporan: {report_id}
-        - Instruksi: {extracted_info.get('immediate_actions', [])}
-        
-        Buat respons WhatsApp yang tepat untuk situasi ini.
+        - Urgensi: {urgency_level}/5
+        - Lokasi: {location_info.get('raw_location', 'tidak spesifik')}
+        - Tindakan prioritas: {priority_actions}
+        - No. Laporan: {report_id}
+        - Kontak pelapor: {phone_number}
+
+        Buat respons WhatsApp 1 pesan sesuai format & regulasi di atas.
         """
-        
+
         try:
             response = client.chat.completions.create(
                 model="gpt-4",
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt}
+                    {"role": "user", "content": user_prompt}
                 ],
-                temperature=0.3,
-                max_tokens=150
+                temperature=0.2,
+                max_tokens=300
             )
-            
-            ai_response = response.choices[0].message.content.strip()
-            
-            # Add report ID dan emergency contact
-            final_response = f"{ai_response}\n\n📝 No. Laporan: {report_id}\n🚨 Darurat: 112"
-            
-            return final_response
-            
+            return response.choices[0].message.content.strip()
+
         except Exception as e:
-            logger.error(f"Error generating WhatsApp response: {e}")
-            return f"✅ Laporan darurat diterima!\n📝 No: {report_id}\nTim akan segera menindaklanjuti.\n🚨 Darurat: 112"
+            logger.error(f"Error generating optimized response: {e}")
+            # Pesan fallback bila API gagal
+            return self.get_fallback_comprehensive_response(report_id, emergency_type, urgency_level)
 
     def update_report_response_status(self, report_id: str, response_sent: bool):
         """Update status response sent"""
