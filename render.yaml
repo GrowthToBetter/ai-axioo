@@ -1,22 +1,38 @@
 services:
-  web:
-    name: Lomba
+  - type: web
+    name: emergency-nlp-system
     env: python
-    build: .
-    start: ./start_render.sh
-    # Menggunakan port dinamis dari Render
-    ports:
-      - http: $PORT
-    environment:
-      - OPENAI_API_KEY
-      - FACEBOOK_ACCESS_TOKEN
-      - FACEBOOK_PHONE_NUMBER_ID
-      - FACEBOOK_WEBHOOK_VERIFY_TOKEN
-      - DATABASE_URL
-      - DIRECT_URL
-    # Menambahkan koneksi database jika diperlukan
-    databases:
-      - type: postgresql
-        name: emergency-nlp-db
-        version: 15
-        size: 1GB
+    buildCommand: "./build.sh"
+    startCommand: "./start_render.sh"
+    plan: starter
+    healthCheckPath: "/health"
+    
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: FLASK_ENV
+        value: production
+      - key: FLASK_APP
+        value: Lomba.py
+      - key: WEB_CONCURRENCY
+        value: 2
+      - key: PORT
+        generateValue: true
+    
+    # Environment variables that need to be set in Render dashboard:
+    # OPENAI_API_KEY
+    # DATABASE_URL  
+    # DIRECT_URL
+    # FACEBOOK_ACCESS_TOKEN
+    # FACEBOOK_PHONE_NUMBER_ID
+    # FACEBOOK_WEBHOOK_VERIFY_TOKEN
+    
+    autoDeploy: true
+    
+  # Optional: Background worker service
+  # - type: worker  
+  #   name: emergency-nlp-worker
+  #   env: python
+  #   buildCommand: "./build.sh"
+  #   startCommand: "python worker.py"
+  #   plan: starter
