@@ -1,3 +1,4 @@
+import time
 import openai
 # import speech_recognition as sr
 # import pyttsx3
@@ -636,30 +637,52 @@ class EnhancedEmergencyNLPSystem:
             return None
 
     def recognize_whisper_enhanced(self, audio) -> Optional[str]:
-        """Whisper-based recognition using OpenAI API"""
-        try:
-            # Convert audio to temporary file
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
-                with wave.open(tmp_file.name, 'wb') as wav_file:
-                    wav_file.setnchannels(1)
-                    wav_file.setsampwidth(audio.sample_width)
-                    wav_file.setframerate(audio.frame_rate)
-                    wav_file.writeframes(audio.frame_data)
+        """Enhanced Whisper-based recognition dengan retry dan error handling"""
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # Convert audio to temporary file
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
+                    with wave.open(tmp_file.name, 'wb') as wav_file:
+                        wav_file.setnchannels(1)
+                        wav_file.setsampwidth(audio.sample_width)
+                        wav_file.setframerate(audio.frame_rate)
+                        wav_file.writeframes(audio.frame_data)
+                    
+                    # Check file size (OpenAI has 25MB limit)
+                    file_size = os.path.getsize(tmp_file.name)
+                    if file_size > 25 * 1024 * 1024:  # 25MB
+                        logger.error(f"Audio file too large: {file_size} bytes")
+                        os.unlink(tmp_file.name)
+                        return None
+                    
+                    # Use OpenAI Whisper API dengan timeout
+                    with open(tmp_file.name, 'rb') as audio_file:
+                        response = client.audio.transcriptions.create(
+                            model="whisper-1",
+                            file=audio_file,
+                            language="id",
+                            response_format="text",  # Langsung text, bukan JSON
+                            temperature=0.2  # Konsistensi hasil
+                        )
+                    
+                    os.unlink(tmp_file.name)
+                    
+                    if hasattr(response, 'text'):
+                        return response.text
+                    else:
+                        return str(response) if response else None
+                        
+            except Exception as e:
+                logger.error(f"Whisper recognition attempt {attempt + 1} failed: {e}")
+                if tmp_file and os.path.exists(tmp_file.name):
+                    os.unlink(tmp_file.name)
                 
-                # Use OpenAI Whisper API
-                with open(tmp_file.name, 'rb') as audio_file:
-                    response = client.audio.transcriptions.create(
-                        model="whisper-1",
-                        file=audio_file,
-                        language="id"
-                    )
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)  # Exponential backoff
+                    continue
                 
-                os.unlink(tmp_file.name)
-                return response.text
-        except Exception as e:
-            logger.error(f"Whisper recognition error: {e}")
-            return None
-
+        return None
     def listen_to_audio_enhanced(self) -> Optional[str]:
         """Enhanced audio listening dengan noise reduction"""
         try:
@@ -698,7 +721,7 @@ class EnhancedEmergencyNLPSystem:
             # Download voice file
             response = requests.get(media_url)
             if response.status_code != 200:
-                return None
+                return ''
             
             # Save to temporary file
             with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp_file:
@@ -726,81 +749,118 @@ class EnhancedEmergencyNLPSystem:
                 
             except Exception as e:
                 logger.error(f"Voice processing error: {e}")
-                return None
+                return ''
                 
         except Exception as e:
             logger.error(f"WhatsApp voice processing error: {e}")
-            return None
+            return ''
 
     def extract_emergency_info_enhanced(self, text: str, context: Dict = None) -> Dict:
-        """Enhanced emergency information extraction"""
+        """Enhanced emergency information extraction dengan better error handling"""
+        if not text or not text.strip():
+            logger.warning("Empty text provided for emergency extraction")
+            return self.get_fallback_response_enhanced()
+
         system_prompt = """
-        Anda adalah AI sistem tanggap darurat instansi publik Indonesia yang canggih.
-        
-        Analisis laporan darurat dengan detail dan berikan respons JSON dengan struktur:
+        Anda adalah AI sistem tanggap darurat Indonesia yang canggih.
+
+        Analisis laporan darurat dan berikan respons dalam format JSON yang valid:
         {
             "emergency_type": "kebakaran|banjir|gempa|kecelakaan|medis|hewan_berbahaya|pohon_tumbang|lainnya",
-            "urgency_level": 1-5 (1=informasi, 2=rendah, 3=sedang, 4=tinggi, 5=kritis),
+            "urgency_level": 1-5,
             "location": {
                 "raw_location": "lokasi yang disebutkan",
-                "estimated_address": "alamat perkiraan lebih spesifik",
+                "estimated_address": "alamat perkiraan",
                 "landmarks": ["patokan terdekat"]
             },
             "incident_details": {
                 "what_happened": "deskripsi kejadian",
-                "when": "waktu kejadian jika disebutkan",
-                "scale": "skala kejadian (kecil/sedang/besar)",
+                "when": "waktu kejadian",
+                "scale": "kecil|sedang|besar",
                 "cause": "penyebab jika diketahui"
             },
             "victims_info": {
                 "count": "jumlah korban",
                 "condition": "kondisi korban",
-                "ages": "rentang usia jika disebutkan",
+                "ages": "rentang usia",
                 "special_needs": "kebutuhan khusus"
             },
             "immediate_actions": [
-                "tindakan yang harus dilakukan pelapor sekarang juga"
+                "tindakan segera untuk pelapor"
             ],
             "required_resources": [
-                "unit/sumber daya yang dibutuhkan"
+                "unit yang dibutuhkan"
             ],
             "safety_instructions": [
-                "instruksi keselamatan spesifik"
+                "instruksi keselamatan"
             ],
             "additional_info": {
-                "contact_info": "info kontak pelapor jika disebutkan",
+                "contact_info": "info kontak pelapor",
                 "accessibility": "kondisi akses lokasi",
-                "weather_impact": "pengaruh cuaca jika relevan"
+                "weather_impact": "pengaruh cuaca"
             }
         }
-        
-        Berikan analisis yang detail dan akurat berdasarkan konteks Indonesia.
+
+        PENTING: Respons harus berupa JSON yang valid tanpa teks tambahan.
         """
-        
+
         context_info = ""
         if context:
-            context_info = f"\nKonteks tambahan: {json.dumps(context, ensure_ascii=False)}"
-        
-        try:
-            response = client.chat.completions.create(
-                model="gpt-4",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Laporan darurat: {text}{context_info}"}
-                ],
-                temperature=0.2,
-                max_tokens=1200
-            )
-            
-            result = response.choices[0].message.content.strip()
-            if result.startswith("```json"):
-                result = result.replace("```json", "").replace("```", "").strip()
-            
-            return json.loads(result)
-        except Exception as e:
-            logger.error(f"Error extracting emergency info: {e}")
-            return self.get_fallback_response_enhanced()
+            context_info = f"\nKonteks: {json.dumps(context, ensure_ascii=False)}"
 
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = client.chat.completions.create(
+                    model="gpt-4",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": f"Laporan: {text[:2000]}{context_info}"}
+                    ],
+                    temperature=0.2,
+                    max_tokens=1500,
+                    timeout=30
+                )
+
+                result = response.choices[0].message.content.strip()
+                logger.info(f"Raw OpenAI response: {result[:200]}...")
+
+                # Clean response
+                if result.startswith("```json"):
+                    result = result.replace("```json", "").replace("```", "").strip()
+                elif result.startswith("```"):
+                    result = result.replace("```", "").strip()
+
+                # Parse JSON
+                try:
+                    parsed_result = json.loads(result)
+                    logger.info("Successfully parsed emergency info")
+                    return parsed_result
+                except json.JSONDecodeError as je:
+                    logger.error(f"JSON parse error attempt {attempt + 1}: {je}")
+                    logger.error(f"Raw response: {result}")
+
+                    # Try to fix common JSON issues
+                    try:
+                        # Remove any leading/trailing non-JSON text
+                        start = result.find('{')
+                        end = result.rfind('}') + 1
+                        if start >= 0 and end > start:
+                            clean_json = result[start:end]
+                            parsed_result = json.loads(clean_json)
+                            logger.info("Successfully parsed cleaned JSON")
+                            return parsed_result
+                    except:
+                        pass
+
+            except Exception as e:
+                logger.error(f"OpenAI API error attempt {attempt + 1}: {e}")
+
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)  # Exponential backoff
+
+        logger.error("All attempts to extract emergency info failed, using fallback")
+        return self.get_fallback_response_enhanced()
     def get_fallback_response_enhanced(self) -> Dict:
         """Enhanced fallback response"""
         return {
@@ -971,84 +1031,114 @@ class EnhancedEmergencyNLPSystem:
     
     
     def process_facebook_message(self, from_number: str, message_body: str, 
-                                 message_id: str, message_type: str, media_url: str = None):
-        """Optimized Facebook WhatsApp message processing - SINGLE RESPONSE"""
+                             message_id: str, message_type: str, media_url: str = None):
+        """Optimized Facebook WhatsApp message processing dengan error handling"""
         try:
-            # Handle voice note (audio)
+            # Log incoming message
+            logger.info(f"Processing message from {from_number}, type: {message_type}")
+            
+            # Handle voice note
             if message_type == 'audio' and media_url:
+                logger.info("Processing voice message...")
                 transcribed_text = self.process_facebook_voice(media_url)
                 if transcribed_text:
                     message_body = transcribed_text
+                    logger.info(f"Voice transcribed: {transcribed_text[:100]}...")
                 else:
+                    logger.error("Voice transcription failed")
                     self.send_whatsapp_message(
                         from_number, 
-                        "Maaf, tidak dapat memproses pesan suara. Silakan kirim pesan teks."
+                        "Maaf, tidak dapat memproses pesan suara. Silakan kirim pesan teks atau coba lagi."
                     )
                     return
             
-            if not message_body.strip():
+            # Validate message
+            if not message_body or not message_body.strip():
+                logger.warning("Empty message received")
                 self.send_whatsapp_message(
                     from_number,
                     "Maaf, pesan kosong diterima. Silakan kirim laporan darurat Anda."
                 )
                 return
             
-            # Single processing and response generation
+            # Process emergency report
             context = {
                 "source": "facebook_whatsapp",
                 "phone_number": from_number,
-                "message_type": message_type
+                "message_type": message_type,
+                "timestamp": datetime.datetime.now().isoformat()
             }
             
-            # Extract info and create report in one flow
+            # Extract emergency info
+            logger.info("Extracting emergency information...")
             extracted_info = self.extract_emergency_info_enhanced(message_body, context)
-            report_id = f"FB{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
+            
+            # Generate report ID
+            report_id = f"FB{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}{from_number[-4:]}"
             
             # Create report
-            report = EmergencyReport(
-                id=report_id,
-                timestamp=datetime.datetime.now(),
-                caller_info=f"Facebook WhatsApp: {from_number}",
-                caller_phone=from_number,
-                location=extracted_info.get('location', {}).get('raw_location', 'Tidak diketahui'),
-                emergency_type=EmergencyType(extracted_info.get('emergency_type', 'lainnya')),
-                urgency_level=UrgencyLevel(extracted_info.get('urgency_level', 3)),
-                description=message_body,
-                structured_data=extracted_info,
-                ai_recommendations=extracted_info.get('immediate_actions', []),
-                voice_file_path=media_url if message_type == "audio" else None
-            )
-            
-            # Generate SINGLE optimized response
-            response_text = self.generate_optimized_emergency_response(
-                extracted_info, message_body, report_id, from_number
-            )
-            
-            # Save to database (async to not block response)
             try:
-                success = self.save_report_to_postgresql(report)
-                self.save_whatsapp_conversation(
-                    from_number, message_body, message_id, 
-                    message_type, media_url, report_id
+                report = EmergencyReport(
+                    id=report_id,
+                    timestamp=datetime.datetime.now(),
+                    caller_info=f"Facebook WhatsApp: {from_number}",
+                    caller_phone=from_number,
+                    location=extracted_info.get('location', {}).get('raw_location', 'Tidak diketahui'),
+                    emergency_type=EmergencyType(extracted_info.get('emergency_type', 'lainnya')),
+                    urgency_level=UrgencyLevel(extracted_info.get('urgency_level', 3)),
+                    description=message_body,
+                    structured_data=extracted_info,
+                    ai_recommendations=extracted_info.get('immediate_actions', []),
+                    voice_file_path=media_url if message_type == "audio" else None
                 )
-                if success:
-                    self.update_report_response_status(report_id, True)
-            except Exception as db_error:
-                logger.error(f"Database save error: {db_error}")
-                # Don't let DB errors block emergency response
-            
-            # Send SINGLE response
-            self.send_whatsapp_message(from_number, response_text)
-            logger.info(f"Single optimized response sent to {from_number} for report {report_id}")
-            
+                
+                # Generate response
+                logger.info("Generating emergency response...")
+                response_text = self.generate_optimized_emergency_response(
+                    extracted_info, message_body, report_id, from_number
+                )
+                
+                # Save to database (non-blocking)
+                try:
+                    success = self.save_report_to_postgresql(report)
+                    self.save_whatsapp_conversation(
+                        from_number, message_body, message_id, 
+                        message_type, media_url, report_id
+                    )
+                    if success:
+                        self.update_report_response_status(report_id, True)
+                        logger.info(f"Report {report_id} saved successfully")
+                except Exception as db_error:
+                    logger.error(f"Database save error: {db_error}")
+                    # Don't let DB errors block emergency response
+                
+                # Send response
+                logger.info("Sending emergency response...")
+                send_success = self.send_whatsapp_message(from_number, response_text)
+                
+                if send_success:
+                    logger.info(f"Emergency response sent successfully to {from_number} for report {report_id}")
+                else:
+                    logger.error(f"Failed to send response to {from_number}")
+                    
+            except Exception as report_error:
+                logger.error(f"Error creating report: {report_error}")
+                # Send basic acknowledgment
+                self.send_whatsapp_message(
+                    from_number,
+                    f"🚨 Laporan darurat diterima dan sedang diproses.\n📝 Ref: {report_id[:10]}\n📞 Darurat: 112\nTim akan menindaklanjuti."
+                )
+                
         except Exception as e:
-            logger.error(f"Error processing Facebook message: {e}")
-            # Simple error response
-            self.send_whatsapp_message(
-                from_number,
-                "🚨 Laporan diterima. Sistem sedang memproses. Tim teknis akan segera menindaklanjuti."
-            )
-    
+            logger.error(f"Critical error processing Facebook message: {e}")
+            # Send basic error response
+            try:
+                self.send_whatsapp_message(
+                    from_number,
+                    "🚨 Laporan diterima. Sistem memproses. Hubungi 112 untuk darurat mendesak."
+                )
+            except:
+                logger.error("Failed to send even basic error response")
     def get_facebook_media_url(self, media_id: str) -> str:
         """Get media URL from Facebook API"""
         try:
@@ -1066,86 +1156,135 @@ class EnhancedEmergencyNLPSystem:
     
 
     def process_facebook_voice(self, media_url: str) -> str:
-        """Process voice message from Facebook"""
+        """Process voice message dari Facebook dengan improved error handling"""
         try:
-            # Download voice file with Facebook authentication
+            # Download voice file dengan retry
+            max_retries = 3
             headers = {'Authorization': f'Bearer {FACEBOOK_ACCESS_TOKEN}'}
-            response = requests.get(media_url, headers=headers, timeout=30)
-            
-            if response.status_code == 200:
-                with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp_file:
-                    tmp_file.write(response.content)
-                    temp_path = tmp_file.name
-                
-                # Use OpenAI Whisper for transcription
+
+            for attempt in range(max_retries):
                 try:
-                    with open(temp_path, 'rb') as audio_file:
-                        transcription = client.audio.transcriptions.create(
-                            model="whisper-1",
-                            file=audio_file,
-                            language="id"
-                        )
-                    
-                    return transcription.text
-                    
-                finally:
-                    if os.path.exists(temp_path):
-                        os.unlink(temp_path)
-            
+                    response = requests.get(media_url, headers=headers, timeout=60)
+                    if response.status_code == 200:
+                        break
+                    else:
+                        logger.warning(f"Download attempt {attempt + 1} failed: HTTP {response.status_code}")
+                except requests.RequestException as e:
+                    logger.warning(f"Download attempt {attempt + 1} failed: {e}")
+                    if attempt < max_retries - 1:
+                        time.sleep(2 ** attempt)
+                        continue
+            else:
+                logger.error("Failed to download voice file after all retries")
+                return ''
+
+            # Save to temporary file
+            with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp_file:
+                tmp_file.write(response.content)
+                temp_path = tmp_file.name
+
+            try:
+                # Check file size
+                file_size = os.path.getsize(temp_path)
+                if file_size > 25 * 1024 * 1024:  # 25MB limit
+                    logger.error(f"Voice file too large: {file_size} bytes")
+                    return ''
+
+                if file_size < 1024:  # File terlalu kecil (< 1KB)
+                    logger.error(f"Voice file too small: {file_size} bytes")
+                    return ''
+
+                # Convert to WAV jika perlu (untuk compatibility)
+                wav_path = temp_path.replace(".ogg", ".wav")
+
+                # Try pydub conversion first if available
+                try:
+                    from pydub import AudioSegment
+                    audio = AudioSegment.from_file(temp_path)
+                    # Normalize audio
+                    audio = audio.set_channels(1)  # Mono
+                    audio = audio.set_frame_rate(16000)  # Standard rate
+                    audio.export(wav_path, format="wav")
+                    transcription_file = wav_path
+                except ImportError:
+                    # Fallback: gunakan file asli
+                    transcription_file = temp_path
+
+                # Use OpenAI Whisper API
+                with open(transcription_file, 'rb') as audio_file:
+                    transcription = client.audio.transcriptions.create(
+                        model="whisper-1",
+                        file=audio_file,
+                        language="id",
+                        response_format="text",
+                        temperature=0.2,
+                        prompt="Ini adalah laporan darurat dalam bahasa Indonesia. Transkripsi dengan akurat:"
+                    )
+
+                result = transcription if isinstance(transcription, str) else transcription.text
+                logger.info(f"Voice transcribed successfully: {result[:100]}...")
+                return result
+
+            finally:
+                # Cleanup
+                for file_path in [temp_path, wav_path]:
+                    if os.path.exists(file_path):
+                        try:
+                            os.unlink(file_path)
+                        except:
+                            pass
+                        
         except Exception as e:
             logger.error(f"Error processing Facebook voice: {e}")
-        
-        return None
-        
+            return ''
     def generate_optimized_emergency_response(self, extracted_info: Dict, original_text: str, report_id: str, phone_number: str) -> str:
-        """Generate single optimized emergency response for WhatsApp"""
-        
+        """Generate optimized emergency response dengan fallback"""
+
         system_prompt = """
         Anda adalah operator darurat profesional Indonesia. Berikan respons WhatsApp yang:
-        
-        1. SATU PESAN LENGKAP (maksimal 500 karakter untuk WhatsApp)
-        2. Struktur terorganisir dengan emoji sebagai separator
-        3. Informasi prioritas: konfirmasi → tindakan segera → kontak darurat → nomor laporan
-        4. Bahasa Indonesia yang jelas dan menenangkan
-        5. Actionable dan tidak membuang waktu
-        
-        Format respons:
-        🚨 [Konfirmasi singkat situasi]
-        
+
+        1. Maksimal 400 karakter untuk kompatibilitas WhatsApp
+        2. Format jelas dengan emoji
+        3. Prioritas: konfirmasi → tindakan → kontak darurat → nomor laporan
+        4. Bahasa Indonesia yang menenangkan dan actionable
+
+        Format:
+        🚨 [Konfirmasi singkat]
+
         ⚡ SEGERA:
-        • [1-3 tindakan paling penting]
-        
+        • [Tindakan 1]
+        • [Tindakan 2]
+
         📞 Darurat: 112
-        📝 No: [report_id]
-        
-        Tim sedang menindaklanjuti. Tetap aman!
+        📝 No: [ID]
+
+        Tim menindaklanjuti. Tetap aman!
         """
-        
+
         urgency_level = extracted_info.get('urgency_level', 3)
         emergency_type = extracted_info.get('emergency_type', 'lainnya')
         location_info = extracted_info.get('location', {})
         immediate_actions = extracted_info.get('immediate_actions', [])
-        
-        # Prioritize actions based on urgency and type
-        priority_actions = immediate_actions[:3] if immediate_actions else [
+
+        # Prioritas tindakan
+        priority_actions = immediate_actions[:2] if immediate_actions else [
             "tetap tenang dan aman",
-            "jauhi area berbahaya", 
-            "tunggu bantuan"
+            "jauhi area berbahaya"
         ]
-        
+
         user_prompt = f"""
-        DARURAT: {original_text}
-        
-        Data:
+        Laporan: {original_text[:500]}
+
+        Info:
         - Jenis: {emergency_type}
         - Urgensi: {urgency_level}/5
         - Lokasi: {location_info.get('raw_location', 'tidak spesifik')}
         - Tindakan: {priority_actions}
-        - No. Laporan: {report_id}
-        
-        Buat respons WhatsApp yang lengkap dalam 1 pesan saja.
+        - No: {report_id}
+
+        Buat respons WhatsApp sesuai format (maks 400 karakter).
         """
-        
+
         try:
             response = client.chat.completions.create(
                 model="gpt-4",
@@ -1153,26 +1292,41 @@ class EnhancedEmergencyNLPSystem:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=0.2,
-                max_tokens=300
+                temperature=0.3,
+                max_tokens=200,
+                timeout=20
             )
-            
-            return response.choices[0].message.content.strip()
-            
+
+            result = response.choices[0].message.content.strip()
+
+            # Pastikan tidak terlalu panjang
+            if len(result) > 450:
+                # Potong di kalimat terakhir yang lengkap
+                sentences = result.split('.')
+                truncated = ''
+                for sentence in sentences:
+                    if len(truncated + sentence + '.') <= 400:
+                        truncated += sentence + '.'
+                    else:
+                        break
+                result = truncated if truncated else result[:400] + '...'
+
+            return result
+
         except Exception as e:
-            logger.error(f"Error generating optimized response: {e}")
-            # Fallback response
-            return f"""🚨 Laporan darurat {emergency_type} diterima
+            logger.error(f"Error generating response: {e}")
 
-⚡ SEGERA:
-• Tetap tenang dan pastikan keselamatan
-• Jauhi area berbahaya
-• Ikuti instruksi petugas jika ada
+            # Fallback response berdasarkan jenis emergency
+            emergency_responses = {
+                'kebakaran': f"🚨 Laporan kebakaran diterima\n\n⚡ SEGERA:\n• Keluar dari area kebakaran\n• Hubungi 113 (Damkar)\n\n📞 Darurat: 112\n📝 No: {report_id}\n\nTim menindaklanjuti. Tetap aman!",
+                'banjir': f"🚨 Laporan banjir diterima\n\n⚡ SEGERA:\n• Pindah ke tempat tinggi\n• Jauhi aliran air\n\n📞 Darurat: 112\n📝 No: {report_id}\n\nTim menindaklanjuti. Tetap aman!",
+                'medis': f"🚨 Laporan darurat medis diterima\n\n⚡ SEGERA:\n• Tetap tenang, jangan panik\n• Hubungi 119 (Ambulans)\n\n📞 Darurat: 112\n📝 No: {report_id}\n\nTim menindaklanjuti. Tetap aman!",
+                'kecelakaan': f"🚨 Laporan kecelakaan diterima\n\n⚡ SEGERA:\n• Amankan area kecelakaan\n• Jangan pindahkan korban\n\n📞 Darurat: 112\n📝 No: {report_id}\n\nTim menindaklanjuti. Tetap aman!"
+            }
 
-📞 Darurat: 112
-📝 No: {report_id}
+            return emergency_responses.get(emergency_type, 
+                f"🚨 Laporan darurat diterima\n\n⚡ SEGERA:\n• Tetap tenang dan aman\n• Jauhi area berbahaya\n\n📞 Darurat: 112\n📝 No: {report_id}\n\nTim menindaklanjuti. Tetap aman!")
 
-Tim sedang menindaklanjuti. Tetap aman!"""
     def get_fallback_comprehensive_response(self, report_id: str, emergency_type: str, urgency_level: int) -> Dict:
         """Fallback comprehensive response ketika GPT gagal"""
         return {
