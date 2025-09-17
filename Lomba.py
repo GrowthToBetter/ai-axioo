@@ -521,11 +521,7 @@ class EnhancedEmergencyNLPSystem:
                 - Fokus pada keselamatan pengguna
                 - Tidak terlalu panjang (maks 200 kata)
                 - Cocok ditampilkan di antarmuka web chat
-                Gunakan format:
-                1. Konfirmasi laporan
-                2. Langkah keselamatan segera
-                3. Informasi tambahan (kontak darurat, nomor laporan)
-                4. Reassurance (tim sedang menindaklanjuti)
+                - Pesan Komprehensive yang bisa dipahami orang awam dengan langkah jelas
                 """
 
                 user_prompt = f"""
@@ -1247,13 +1243,8 @@ class EnhancedEmergencyNLPSystem:
         2. Format jelas dengan emoji
         3. Prioritas: konfirmasi → tindakan → kontak darurat → nomor laporan
         4. Bahasa Indonesia yang menenangkan dan actionable
+        5. Respon komprehensive dan mudah dipahami sesuai dengan regulasi kedaruratan
 
-        Format:
-        🚨 [Konfirmasi singkat]
-
-        ⚡ SEGERA:
-        • [Tindakan 1]
-        • [Tindakan 2]
 
         📞 Darurat: 112
         📝 No: [ID]
@@ -1425,13 +1416,13 @@ class EnhancedEmergencyNLPSystem:
         3. Prioritas: konfirmasi → langkah segera → nomor darurat resmi → nomor laporan
         4. Bahasa Indonesia yang jelas, menenangkan, dan actionable
         5. Sesuai regulasi (Permenkominfo No.10/2016, Permenkes No.19/2016, UU No.24/2007)
+        5. Respon komprehensive dan mudah dipahami sesuai dengan regulasi kedaruratan
 
-        Format respons:
-        🚨 [Konfirmasi singkat situasi]
 
-        ⚡ SEGERA:
-        • [1-3 tindakan penting sesuai konteks]
-        • [Nomor darurat spesifik bila perlu]
+        📞 Darurat: 112
+        📝 No: [ID]
+
+        Tim menindaklanjuti. Tetap aman!
 
         📞 Darurat: 112 (umum) · 119 (medis) · 110 (polisi)
         📝 No: [report_id]
@@ -1690,30 +1681,6 @@ class EnhancedEmergencyNLPSystem:
             logger.error(f"Error generating voice response: {e}")
             return f"Terima kasih atas laporan Anda. Tim darurat akan segera menindaklanjuti. Nomor laporan Anda adalah {report_id}. Mohon tetap tenang dan pastikan keselamatan Anda."
 
-    def display_report_summary(self, report: EmergencyReport, save_success: bool):
-        """Display enhanced report summary"""
-        print(f"\n{'='*60}")
-        print(f"📋 RINGKASAN LAPORAN {report.id}")
-        print(f"{'='*60}")
-        print(f"🕐 Waktu: {report.timestamp.strftime('%d/%m/%Y %H:%M:%S')}")
-        print(f"🏷️  Jenis: {report.emergency_type.value.upper().replace('_', ' ')}")
-        print(f"⚠️  Urgensi: {report.urgency_level.value}/5 - {report.urgency_level.name}")
-        print(f"📍 Lokasi: {report.location}")
-        print(f"📱 Kontak: {report.caller_phone}")
-        print(f"💾 Supabase: {'✅ Tersimpan' if save_success else '❌ Gagal'}")
-        print(f"📊 Status: {report.status.value}")
-        
-        if report.structured_data.get('victims_info'):
-            victims = report.structured_data['victims_info']
-            if victims.get('count') and victims['count'] != 'tidak diketahui':
-                print(f"👥 Korban: {victims['count']} - {victims.get('condition', 'kondisi tidak diketahui')}")
-        
-        if report.ai_recommendations:
-            print(f"🎯 Rekomendasi AI:")
-            for i, rec in enumerate(report.ai_recommendations[:3], 1):
-                print(f"   {i}. {rec}")
-        
-        print(f"{'='*60}\n")
 
     def run_text_mode_enhanced(self):
         """Enhanced text mode dengan better processing"""
