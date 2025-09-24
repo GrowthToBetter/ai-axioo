@@ -942,23 +942,581 @@ class EnhancedEmergencyNLPSystem:
             logger.error(f"WhatsApp voice processing error: {e}")
             return ''
 
-    def extract_emergency_info_fast(self, text: str, context: Dict = None) -> Dict:
-        """Fast emergency extraction with reduced token usage and timeout"""
+    def extract_emergency_info_enhanced(self, text: str, context: Dict = None) -> Dict:
+        """Enhanced emergency information extraction dengan better error handling"""
         if not text or not text.strip():
             logger.warning("Empty text provided for emergency extraction")
             return self.get_fallback_response_enhanced()
 
-        # Simplified system prompt for faster processing
         system_prompt = """
-        Analisis darurat dalam JSON valid:
+        Anda adalah AI sistem tanggap darurat Indonesia yang canggih.
+
+        Analisis laporan darurat dan berikan respons dalam format JSON yang valid:
         {
             "emergency_type": "kebakaran|banjir|gempa|kecelakaan|medis|hewan_berbahaya|pohon_tumbang|lainnya",
             "urgency_level": 1-5,
-            "location": {"raw_location": "lokasi", "estimated_address": "alamat"},
-            "immediate_actions": ["tindakan segera"],
-            "required_resources": ["unit dibutuhkan"]
+            "location": {
+                "raw_location": "lokasi yang disebutkan",
+                "estimated_address": "alamat perkiraan",
+                "landmarks": ["patokan terdekat"]
+            },
+            "incident_details": {
+                "what_happened": "deskripsi kejadian",
+                "when": "waktu kejadian",
+                "scale": "kecil|sedang|besar",
+                "cause": "penyebab jika diketahui"
+            },
+            "victims_info": {
+                "count": "jumlah korban",
+                "condition": "kondisi korban",
+                "ages": "rentang usia",
+                "special_needs": "kebutuhan khusus"
+            },
+            "immediate_actions": [
+                "tindakan segera untuk pelapor"
+            ],
+            "required_resources": [
+                "unit yang dibutuhkan"
+            ],
+            "safety_instructions": [
+                "instruksi keselamatan"
+            ],
+            "additional_info": {
+                "contact_info": "info kontak pelapor",
+                "accessibility": "kondisi akses lokasi",
+                "weather_impact": "pengaruh cuaca"
+            }
         }
-        Hanya JSON, tanpa teks tambahan.
+
+        PENTING: Respons harus berupa JSON yang valid tanpa teks tambahan.
+        """
+
+        context_info = ""
+        if context:
+            context_info = f"\nKonteks: {json.dumps(context, ensure_ascii=False)}"
+
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": f"Laporan: {text[:2000]}{context_info}"}
+                    ],
+                    temperature=0.2,
+                    max_tokens=1500,
+                    timeout=30
+                )
+
+                result = response.choices[0].message.content.strip()
+                logger.info(f"Raw OpenAI response: {result[:200]}...")
+
+                # Clean response
+                if result.startswith("```json"):
+                    result = result.replace("```json", "").replace("```", "").strip()
+                elif result.startswith("```"):
+                    result = result.replace("```", "").strip()
+
+                # Parse JSON
+                try:
+                    parsed_result = json.loads(result)
+                    logger.info("Successfully parsed emergency info")
+                    return parsed_result
+                except json.JSONDecodeError as je:
+                    logger.error(f"JSON parse error attempt {attempt + 1}: {je}")
+                    logger.error(f"Raw response: {result}")
+
+                    # Try to fix common JSON issues
+                    try:
+                        # Remove any leading/trailing non-JSON text
+                        start = result.find('{')
+                        end = result.rfind('}') + 1
+                        if start >= 0 and end > start:
+                            clean_json = result[start:end]
+                            parsed_result = json.loads(clean_json)
+                            logger.info("Successfully parsed cleaned JSON")
+                            return parsed_result
+                    except:
+                        pass
+
+            except Exception as e:
+                logger.error(f"OpenAI API error attempt {attempt + 1}: {e}")
+
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)  # Exponential backoff
+
+        logger.error("All attempts to extract emergency info failed, using fallback")
+        return self.get_fallback_response_enhanced()
+    def get_fallback_response_enhanced(self) -> Dict:
+        """Enhanced fallback response"""
+        return {
+            "emergency_type": "lainnya",
+            "urgency_level": 3,
+            "location": {
+                "raw_location": "tidak spesifik",
+                "estimated_address": "perlu klarifikasi",
+                "landmarks": []
+            },
+            "incident_details": {
+                "what_happened": "perlu klarifikasi lebih lanjut",
+                "when": "tidak disebutkan",
+                "scale": "tidak diketahui",
+                "cause": "tidak diketahui"
+            },
+            "victims_info": {
+                "count": "tidak diketahui",
+                "condition": "tidak diketahui",
+                "ages": "tidak disebutkan",
+                "special_needs": "tidak diketahui"
+            },
+            "immediate_actions": ["tetap tenang", "jauhi bahaya", "tunggu bantuan"],
+            "required_resources": ["unit standar emergency"],
+            "safety_instructions": ["pastikan keselamatan pribadi", "hindari area berbahaya"],
+            "additional_info": {
+                "contact_info": "tidak disebutkan",
+                "accessibility": "tidak diketahui",
+                "weather_impact": "tidak relevan"
+            }
+        }
+
+    def save_report_to_postgresql(self, report: EmergencyReport) -> bool:
+        """Save report ke Supabase PostgreSQL"""
+        conn = self.db_manager.get_connection()
+        if not conn:
+            return False
+        
+        try:
+            with conn.cursor() as cursor:
+                insert_query = """
+                INSERT INTO dev_moklet_ai.emergency_reports (
+                    report_number, caller_info, caller_phone, location,
+                    emergency_type, urgency_level, description, structured_data,
+                    ai_recommendations, status, voice_file_path, response_sent
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+                """
+                
+                cursor.execute(insert_query, (
+                    report.id,
+                    report.caller_info,
+                    report.caller_phone,
+                    report.location,
+                    report.emergency_type.value,
+                    report.urgency_level.value,
+                    report.description,
+                    json.dumps(report.structured_data, ensure_ascii=False),
+                    json.dumps(report.ai_recommendations, ensure_ascii=False),
+                    report.status.value,
+                    report.voice_file_path,
+                    report.response_sent
+                ))
+                
+                report_uuid = cursor.fetchone()[0]
+                conn.commit()
+                
+                logger.info(f"Report {report.id} saved to Supabase with UUID: {report_uuid}")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Error saving report to Supabase: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    def save_whatsapp_conversation(self, phone_number: str, message_body: str, 
+                                 message_sid: str, message_type: str = "text",
+                                 media_url: str = None, report_id: str = None):
+        """Save WhatsApp conversation to Supabase database"""
+        conn = self.db_manager.get_connection()
+        if not conn:
+            return
+        
+        try:
+            with conn.cursor() as cursor:
+                # Get report UUID if report_id provided
+                report_uuid = None
+                if report_id:
+                    cursor.execute("SELECT id FROM dev_moklet_ai.emergency_reports WHERE report_number = %s", (report_id,))
+                    result = cursor.fetchone()
+                    if result:
+                        report_uuid = result[0]
+                
+                insert_query = """
+                INSERT INTO dev_moklet_ai.whatsapp_conversations (
+                    phone_number, message_sid, message_body, message_type,
+                    media_url, report_id
+                ) VALUES (%s, %s, %s, %s, %s, %s)
+                """
+                
+                cursor.execute(insert_query, (
+                    phone_number,
+                    message_sid,
+                    message_body,
+                    message_type,
+                    media_url,
+                    report_uuid
+                ))
+                
+                conn.commit()
+                
+        except Exception as e:
+            logger.error(f"Error saving WhatsApp conversation to Supabase: {e}")
+        finally:
+            conn.close()
+
+    def send_whatsapp_message(self, to_number: str, message: str) -> bool:
+        """Send WhatsApp message via Facebook API - Only called for regular webhook requests"""
+        return facebook_whatsapp.send_message(to_number, message)
+    
+    def handle_facebook_webhook(self):
+        """Ultra-optimized Facebook webhook handler with immediate response and streaming"""
+        try:
+            data = request.get_json()
+
+            if not data:
+                return jsonify({"status": "ok"}), 200
+
+            # Process messages with immediate response indicators
+            if 'entry' in data:
+                for entry in data['entry']:
+                    if 'changes' in entry:
+                        for change in entry['changes']:
+                            if change.get('field') == 'messages':
+                                value = change.get('value', {})
+
+                                if 'messages' in value:
+                                    for message in value['messages']:
+                                        from_number = message.get('from')
+                                        message_id = message.get('id')
+
+                                        # Handle text message with immediate feedback
+                                        if message.get('type') == 'text':
+                                            message_body = message.get('text', {}).get('body', '')
+
+                                            # Send immediate typing indicator (non-blocking)
+                                            threading.Thread(
+                                                target=self.send_typing_indicator_fast,
+                                                args=(from_number,)
+                                            ).start()
+
+                                            # Process with streaming response
+                                            threading.Thread(
+                                                target=self.process_facebook_message_streaming,
+                                                args=(from_number, message_body, message_id, 'text')
+                                            ).start()
+
+                                        # Handle audio with immediate acknowledgment
+                                        elif message.get('type') == 'audio':
+                                            audio_data = message.get('audio', {})
+                                            media_id = audio_data.get('id')
+
+                                            # Send immediate processing message
+                                            threading.Thread(
+                                                target=self.send_immediate_audio_ack,
+                                                args=(from_number,)
+                                            ).start()
+
+                                            # Get media URL and process with streaming
+                                            media_url = self.get_facebook_media_url(media_id)
+                                            threading.Thread(
+                                                target=self.process_facebook_message_streaming,
+                                                args=(from_number, '', message_id, 'audio', media_url)
+                                            ).start()
+
+            return jsonify({"status": "ok"}), 200
+
+        except Exception as e:
+            logger.error(f"Error handling Facebook webhook: {e}")
+            return jsonify({"status": "error"}), 500
+
+    def send_typing_indicator_fast(self, phone_number):
+        """Send typing indicator with minimal delay"""
+        try:
+            # Use optimized session for faster requests
+            if not hasattr(self, '_fast_session'):
+                self._fast_session = requests.Session()
+                self._fast_session.headers.update({
+                    'Authorization': f'Bearer {self.access_token}',
+                    'Content-Type': 'application/json',
+                    'Connection': 'keep-alive'
+                })
+
+            url = f"https://graph.facebook.com/v18.0/{self.phone_number_id}/messages"
+            payload = {
+                "messaging_product": "whatsapp",
+                "recipient_type": "individual",
+                "to": phone_number,
+                "type": "typing_on"
+            }
+
+            self._fast_session.post(url, json=payload, timeout=2)
+
+        except Exception as e:
+            logger.debug(f"Typing indicator error (non-critical): {e}")
+
+    def send_immediate_audio_ack(self, phone_number):
+        """Send immediate audio processing acknowledgment"""
+        try:
+            self.send_whatsapp_message_fast(phone_number, "🎵 Memproses audio...")
+        except Exception as e:
+            logger.debug(f"Audio ack error (non-critical): {e}")
+
+    def process_facebook_message_streaming(self, from_number, message_body, message_id, message_type, media_url=None):
+        """Enhanced process with streaming response for ultra-fast delivery"""
+        try:
+            # Handle voice note first
+            if message_type == 'audio' and media_url:
+                logger.info("Processing voice message...")
+                transcribed_text = self.process_facebook_voice(media_url)
+                if transcribed_text:
+                    message_body = transcribed_text
+                    logger.info(f"Voice transcribed: {transcribed_text[:100]}...")
+                else:
+                    self.send_whatsapp_message_fast(
+                        from_number, 
+                        "Maaf, tidak dapat memproses pesan suara. Silakan kirim pesan teks."
+                    )
+                    return
+
+            # Validate message
+            if not message_body or not message_body.strip():
+                self.send_whatsapp_message_fast(
+                    from_number,
+                    "Silakan kirim laporan darurat yang lebih jelas."
+                )
+                return
+
+            # Process emergency info
+            context = {
+                "source": "facebook_whatsapp_streaming",
+                "phone_number": from_number,
+                "message_type": message_type,
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+
+            # Extract emergency info (in background)
+            extracted_info = self.extract_emergency_info_enhanced(message_body, context)
+
+            # Generate report ID
+            report_id = f"FB{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}{from_number[-4:]}"
+
+            # Generate and send response with chunking
+            self.generate_and_send_chunked_response(
+                from_number, extracted_info, message_body, report_id, message_id, 
+                message_type, media_url
+            )
+
+        except Exception as e:
+            logger.error(f"Error in streaming message processing: {e}")
+            self.send_whatsapp_message_fast(
+                from_number, 
+                "🚨 Laporan diterima. Tim memproses. Hubungi 112 jika mendesak."
+            )
+
+    def generate_and_send_chunked_response(self, from_number, extracted_info, message_body, 
+                                         report_id, message_id, message_type, media_url=None):
+        """Generate AI response and send in optimized chunks"""
+        try:
+            # Generate AI response with streaming
+            full_response = self.generate_optimized_emergency_response(
+                extracted_info, message_body, report_id, from_number
+            )
+
+            # Split response intelligently
+            chunks = self.split_response_for_whatsapp(full_response)
+
+            # Send chunks with optimized timing
+            for i, chunk in enumerate(chunks):
+                if i == 0:
+                    # First chunk - immediate send
+                    success = self.send_whatsapp_message_fast(from_number, chunk)
+                    if not success:
+                        # Fallback for first chunk failure
+                        self.send_whatsapp_message_fast(
+                            from_number, 
+                            f"🚨 Laporan {report_id} diterima. Tim menindaklanjuti. Hubungi 112 jika darurat."
+                        )
+                        break
+                else:
+                    # Subsequent chunks with minimal delay
+                    time.sleep(0.3)  # Small delay for natural flow
+                    self.send_whatsapp_message_fast(from_number, chunk)
+
+            # Save to database (non-blocking, after response sent)
+            threading.Thread(
+                target=self.save_report_data_background,
+                args=(extracted_info, message_body, report_id, from_number, 
+                      message_id, message_type, media_url)
+            ).start()
+
+        except Exception as e:
+            logger.error(f"Error in chunked response generation: {e}")
+            self.send_whatsapp_message_fast(
+                from_number,
+                f"🚨 Laporan darurat #{report_id[:8]} diterima dan sedang diproses. Tim akan menindaklanjuti."
+            )
+
+    def split_response_for_whatsapp(self, text, max_chunk_size=800):
+        """Split response optimally for WhatsApp"""
+        if len(text) <= max_chunk_size:
+            return [text]
+
+        chunks = []
+
+        # Try to split by paragraphs first
+        paragraphs = text.split('\n\n')
+        current_chunk = ""
+
+        for paragraph in paragraphs:
+            # If single paragraph is too long, split by sentences
+            if len(paragraph) > max_chunk_size:
+                sentences = paragraph.split('. ')
+                for sentence in sentences:
+                    test_chunk = current_chunk + sentence + '. '
+                    if len(test_chunk) <= max_chunk_size:
+                        current_chunk = test_chunk
+                    else:
+                        if current_chunk:
+                            chunks.append(current_chunk.strip())
+                        current_chunk = sentence + '. '
+            else:
+                test_chunk = current_chunk + '\n\n' + paragraph if current_chunk else paragraph
+                if len(test_chunk) <= max_chunk_size:
+                    current_chunk = test_chunk
+                else:
+                    if current_chunk:
+                        chunks.append(current_chunk.strip())
+                    current_chunk = paragraph
+
+        if current_chunk:
+            chunks.append(current_chunk.strip())
+
+        return chunks
+
+    def send_whatsapp_message_fast(self, phone_number, message):
+        """Optimized WhatsApp message sending with connection pooling"""
+        try:
+            # Initialize fast session if not exists
+            if not hasattr(self, '_fast_session'):
+                self._fast_session = requests.Session()
+                self._fast_session.headers.update({
+                    'Authorization': f'Bearer {self.access_token}',
+                    'Content-Type': 'application/json',
+                    'Connection': 'keep-alive',
+                    'User-Agent': 'Emergency-NLP-System/1.0'
+                })
+                # Set connection pooling
+                adapter = requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=20)
+                self._fast_session.mount('https://', adapter)
+
+            url = f"https://graph.facebook.com/v18.0/{self.phone_number_id}/messages"
+
+            payload = {
+                "messaging_product": "whatsapp",
+                "recipient_type": "individual",
+                "to": phone_number,
+                "type": "text",
+                "text": {"body": message}
+            }
+
+            response = self._fast_session.post(url, json=payload, timeout=8)
+
+            if response.status_code == 200:
+                logger.info(f"Fast message sent to {phone_number}")
+                return True
+            else:
+                logger.error(f"Fast send failed: {response.status_code}")
+                return False
+
+        except Exception as e:
+            logger.error(f"Fast WhatsApp send error: {e}")
+            return False
+
+    def save_report_data_background(self, extracted_info, message_body, report_id, 
+                                   from_number, message_id, message_type, media_url):
+        """Save report data in background to avoid blocking response"""
+        try:
+            # Create report object
+            report = EmergencyReport(
+                id=report_id,
+                timestamp=datetime.datetime.now(),
+                caller_info=f"Facebook WhatsApp: {from_number}",
+                caller_phone=from_number,
+                location=extracted_info.get('location', {}).get('raw_location', 'Tidak diketahui'),
+                emergency_type=EmergencyType(extracted_info.get('emergency_type', 'lainnya')),
+                urgency_level=UrgencyLevel(extracted_info.get('urgency_level', 3)),
+                description=message_body,
+                structured_data=extracted_info,
+                ai_recommendations=extracted_info.get('immediate_actions', []),
+                voice_file_path=media_url if message_type == "audio" else None,
+                response_sent=True
+            )
+
+            # Save to database
+            success = self.save_report_to_postgresql(report)
+
+            # Save conversation
+            self.save_whatsapp_conversation(
+                from_number, message_body, message_id, 
+                message_type, media_url, report_id
+            )
+
+            if success:
+                logger.info(f"Report {report_id} saved successfully in background")
+            else:
+                logger.error(f"Failed to save report {report_id} in background")
+
+        except Exception as e:
+            logger.error(f"Background save error: {e}")
+
+    def generate_optimized_emergency_response(self, extracted_info, original_text, report_id, phone_number):
+        """Generate emergency response optimized for speed and clarity"""
+
+        system_prompt = """
+        Anda adalah operator darurat profesional Indonesia. Berikan respons WhatsApp yang:
+
+        1. Maksimal 400 karakter untuk kompatibilitas WhatsApp
+        2. Format jelas dengan emoji
+        3. Prioritas: konfirmasi → tindakan → kontak darurat → nomor laporan
+        4. Bahasa Indonesia yang menenangkan dan actionable
+        5. Respon komprehensive dan mudah dipahami sesuai dengan regulasi kedaruratan
+
+
+        📞 Darurat: 112
+        📝 No: [ID]
+
+        Tim menindaklanjuti. Tetap aman!
+        """
+
+        urgency_level = extracted_info.get('urgency_level', 3)
+        emergency_type = extracted_info.get('emergency_type', 'lainnya')
+        location = extracted_info.get('location', {}).get('raw_location', 'lokasi Anda')
+        immediate_actions = extracted_info.get('immediate_actions', [])
+
+        # Specialized numbers for emergency types
+        specialized_numbers = {
+            'kebakaran': '113',
+            'medis': '119', 
+            'kecelakaan': '110',
+            'banjir': '112'
+        }
+
+        special_number = specialized_numbers.get(emergency_type, '112')
+
+        user_prompt = f"""
+        LAPORAN: {original_text[:300]}
+
+        INFO:
+        - Jenis: {emergency_type}
+        - Urgensi: {urgency_level}/5
+        - Lokasi: {location}
+        - Tindakan: {immediate_actions[:3]}
+        - ID: {report_id}
+        - Nomor khusus: {special_number}
+
+        Buat respons WhatsApp sesuai format (maks 400 karakter).
         """
 
         try:
@@ -966,264 +1524,50 @@ class EnhancedEmergencyNLPSystem:
                 model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Laporan: {text[:1000]}"}  # Limit text length
+                    {"role": "user", "content": user_prompt}
                 ],
-                temperature=0.1,  # Lower temperature for consistency
-                max_tokens=800,   # Reduced tokens
-                timeout=15        # Shorter timeout
+                temperature=0.2,
+                max_tokens=250,
+                timeout=15  # Faster timeout
             )
 
             result = response.choices[0].message.content.strip()
-            
-            # Quick JSON cleaning
-            if result.startswith("```"):
-                result = result.replace("```json", "").replace("```", "").strip()
 
-            try:
-                parsed_result = json.loads(result)
-                # Fill missing fields with defaults
-                return self.normalize_emergency_response(parsed_result)
-            except json.JSONDecodeError:
-                # Quick JSON fix attempt
-                start = result.find('{')
-                end = result.rfind('}') + 1
-                if start >= 0 and end > start:
-                    try:
-                        clean_json = result[start:end]
-                        parsed_result = json.loads(clean_json)
-                        return self.normalize_emergency_response(parsed_result)
-                    except:
-                        pass
-                        
+            # Ensure length is appropriate
+            if len(result) > 450:
+                # Quick truncation at sentence boundary
+                sentences = result.split('.')
+                truncated = ''
+                for sentence in sentences[:-1]:  # Skip last potentially incomplete
+                    if len(truncated + sentence + '.') <= 400:
+                        truncated += sentence + '.'
+                    else:
+                        break
+                result = truncated or result[:400]
+
+            return result
+
         except Exception as e:
-            logger.error(f"Fast emergency extraction failed: {e}")
+            logger.error(f"AI response generation error: {e}")
 
-        return self.get_fallback_response_enhanced()
+            # Ultra-fast fallback responses by emergency type
+            fallback_responses = {
+                'kebakaran': f"🚨 Laporan kebakaran diterima\n\n⚡ SEGERA:\n• Keluar dari area kebakaran\n• Tutup pintu di belakang Anda\n\n📞 Damkar: 113 | Darurat: 112\n📝 No: {report_id}\n\nTim menindaklanjuti!",
 
-    def normalize_emergency_response(self, response: Dict) -> Dict:
-        """Normalize and fill missing fields quickly"""
-        normalized = {
-            "emergency_type": response.get("emergency_type", "lainnya"),
-            "urgency_level": min(max(int(response.get("urgency_level", 3)), 1), 5),
-            "location": {
-                "raw_location": response.get("location", {}).get("raw_location", "tidak diketahui"),
-                "estimated_address": response.get("location", {}).get("estimated_address", "perlu klarifikasi"),
-                "landmarks": response.get("location", {}).get("landmarks", [])
-            },
-            "incident_details": {
-                "what_happened": response.get("incident_details", {}).get("what_happened", "perlu klarifikasi"),
-                "when": response.get("incident_details", {}).get("when", "tidak disebutkan"),
-                "scale": response.get("incident_details", {}).get("scale", "tidak diketahui"),
-                "cause": response.get("incident_details", {}).get("cause", "tidak diketahui")
-            },
-            "victims_info": {
-                "count": response.get("victims_info", {}).get("count", "tidak diketahui"),
-                "condition": response.get("victims_info", {}).get("condition", "tidak diketahui"),
-                "ages": response.get("victims_info", {}).get("ages", "tidak disebutkan"),
-                "special_needs": response.get("victims_info", {}).get("special_needs", "tidak diketahui")
-            },
-            "immediate_actions": response.get("immediate_actions", ["tetap tenang", "jauhi bahaya"]),
-            "required_resources": response.get("required_resources", ["unit standar emergency"]),
-            "safety_instructions": response.get("safety_instructions", ["pastikan keselamatan pribadi"]),
-            "additional_info": {
-                "contact_info": response.get("additional_info", {}).get("contact_info", "tidak disebutkan"),
-                "accessibility": response.get("additional_info", {}).get("accessibility", "tidak diketahui"),
-                "weather_impact": response.get("additional_info", {}).get("weather_impact", "tidak relevan")
-            }
-        }
-        return normalized
+                'banjir': f"🚨 Laporan banjir diterima\n\n⚡ SEGERA:\n• Pindah ke tempat tinggi\n• Matikan listrik jika aman\n\n📞 Darurat: 112\n📝 No: {report_id}\n\nTim menindaklanjuti!",
 
-    def generate_quick_response(self, message_body: str, extracted_info: Dict, report_id: str) -> str:
-        """Generate quick AI response with reduced processing time"""
-        try:
-            # Simplified prompt for faster generation
-            system_prompt = """
-            Operator darurat Indonesia. Buat respons singkat, jelas, profesional (maks 150 kata):
-            - Konfirmasi laporan diterima
-            - 2-3 langkah segera
-            - Nomor laporan
-            - Kontak darurat 112
-            """
+                'medis': f"🚨 Darurat medis diterima\n\n⚡ SEGERA:\n• Tetap tenang\n• Jaga jalur napas korban\n\n📞 Ambulans: 119 | Darurat: 112\n📝 No: {report_id}\n\nTim menindaklanjuti!",
 
-            user_prompt = f"""
-            Laporan: "{message_body[:500]}"
-            Jenis: {extracted_info.get('emergency_type', 'lainnya')}
-            Lokasi: {extracted_info.get('location', {}).get('raw_location', 'tidak diketahui')}
-            Urgensi: {extracted_info.get('urgency_level', 3)}/5
-            No. Laporan: {report_id}
-            """
-
-            response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.3,
-                max_tokens=200,  # Shorter response
-                timeout=10       # Quick timeout
-            )
-            
-            return response.choices[0].message.content.strip()
-            
-        except Exception as e:
-            logger.error(f"Quick response generation failed: {e}")
-            return (
-                f"✅ Laporan darurat Anda (No: {report_id}) telah diterima.\n\n"
-                "🚨 LANGKAH SEGERA:\n"
-                "1. Pastikan keselamatan Anda\n"
-                "2. Jauhi area berbahaya\n"
-                "3. Tunggu tim darurat\n\n"
-                "📞 Darurat: 112"
-            )
-
-    def process_facebook_message_optimized(self, from_number: str, message_body: str, 
-                                         message_id: str, message_type: str = "text", 
-                                         media_url: str = None):
-        """Optimized message processing with immediate response"""
-        try:
-            logger.info(f"Processing Facebook message from {from_number}: {message_body[:100]}...")
-
-            # Step 1: Send immediate acknowledgment (within 20 seconds)
-            quick_ack = "📨 Laporan darurat Anda sedang diproses. Mohon tunggu sebentar..."
-            ack_sent = self.send_whatsapp_message(from_number, quick_ack)
-            
-            if not ack_sent:
-                logger.error(f"Failed to send acknowledgment to {from_number}")
-
-            # Step 2: Quick processing for main response
-            context = {
-                "source": "whatsapp_facebook",
-                "phone_number": from_number,
-                "message_type": message_type,
-                "timestamp": datetime.datetime.now().isoformat()
+                'kecelakaan': f"🚨 Laporan kecelakaan diterima\n\n⚡ SEGERA:\n• Amankan area\n• Jangan pindahkan korban\n\n📞 Polisi: 110 | Darurat: 112\n📝 No: {report_id}\n\nTim menindaklanjuti!"
             }
 
-            # Use fast extraction method
-            extracted_info = self.extract_emergency_info_fast(message_body, context)
+            return fallback_responses.get(emergency_type, 
+                f"🚨 Laporan darurat diterima\n\n⚡ SEGERA:\n• Tetap tenang dan aman\n• Jauhi area berbahaya\n\n📞 Darurat: 112\n📝 No: {report_id}\n\nTim menindaklanjuti!")
 
-            # Process extracted info quickly
-            urgency_level = min(max(int(extracted_info.get("urgency_level", 3)), 1), 5)
-            raw_emergency_type = str(extracted_info.get("emergency_type", "lainnya")).lower().strip()
-            
-            valid_emergency_types = {e.value for e in EmergencyType}
-            if raw_emergency_type not in valid_emergency_types:
-                raw_emergency_type = "lainnya"
-
-            emergency_type = EmergencyType(raw_emergency_type)
-            raw_location = extracted_info.get("location", {}).get("raw_location", "tidak diketahui")
-
-            # Generate report ID
-            report_id = f"FB{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
-
-            # Create report
-            report = EmergencyReport(
-                id=report_id,
-                timestamp=datetime.datetime.now(),
-                caller_info=f"WhatsApp: {from_number}",
-                caller_phone=from_number,
-                location=raw_location,
-                emergency_type=emergency_type,
-                urgency_level=UrgencyLevel(urgency_level),
-                description=message_body,
-                structured_data=extracted_info,
-                ai_recommendations=extracted_info.get("immediate_actions", []),
-                status=ReportStatus.BARU
-            )
-
-            # Save to database (async to not block response)
-            threading.Thread(
-                target=self.save_report_async,
-                args=(report, from_number, message_body, message_id, message_type, media_url, report_id)
-            ).start()
-
-            # Generate and send main response quickly
-            ai_response = self.generate_quick_response(message_body, extracted_info, report_id)
-            
-            # Send main response
-            response_sent = self.send_whatsapp_message(from_number, ai_response)
-            
-            if response_sent:
-                logger.info(f"Quick response sent to {from_number} for report {report_id}")
-            else:
-                logger.error(f"Failed to send main response to {from_number}")
-
-        except Exception as e:
-            logger.error(f"Error in optimized Facebook message processing: {e}", exc_info=True)
-            
-            # Send error response
-            error_message = (
-                "⚠️ Terjadi kesalahan sistem. "
-                "Untuk situasi darurat segera, hubungi 112. "
-                "Silakan coba kirim laporan lagi."
-            )
-            self.send_whatsapp_message(from_number, error_message)
-
-    def save_report_async(self, report: EmergencyReport, from_number: str, message_body: str,
-                         message_id: str, message_type: str, media_url: str, report_id: str):
-        """Asynchronous database save to not block main response"""
-        try:
-            # Save report
-            db_success = self.save_report_to_postgresql(report)
-            
-            # Save conversation
-            self.save_whatsapp_conversation(
-                from_number, message_body, message_id, message_type, media_url, report_id
-            )
-            
-            if db_success:
-                logger.info(f"Report {report_id} saved to database successfully")
-            else:
-                logger.error(f"Failed to save report {report_id} to database")
-                
-        except Exception as e:
-            logger.error(f"Error in async database save: {e}")
-
-    def handle_facebook_webhook_optimized(self):
-        """Optimized Facebook webhook handler with immediate response"""
-        try:
-            data = request.get_json()
-            
-            if not data:
-                return jsonify({"status": "ok"}), 200
-            
-            # Process messages with optimized handler
-            if 'entry' in data:
-                for entry in data['entry']:
-                    if 'changes' in entry:
-                        for change in entry['changes']:
-                            if change.get('field') == 'messages':
-                                value = change.get('value', {})
-                                
-                                if 'messages' in value:
-                                    for message in value['messages']:
-                                        from_number = message.get('from')
-                                        message_id = message.get('id')
-                                        
-                                        # Handle text message
-                                        if message.get('type') == 'text':
-                                            message_body = message.get('text', {}).get('body', '')
-                                            # Use optimized processing
-                                            threading.Thread(
-                                                target=self.process_facebook_message_optimized,
-                                                args=(from_number, message_body, message_id, 'text')
-                                            ).start()
-                                        
-                                        # Handle voice note (audio)
-                                        elif message.get('type') == 'audio':
-                                            audio_data = message.get('audio', {})
-                                            media_id = audio_data.get('id')
-                                            media_url = self.get_facebook_media_url(media_id)
-                                            threading.Thread(
-                                                target=self.process_facebook_message_optimized,
-                                                args=(from_number, '', message_id, 'audio', media_url)
-                                            ).start()
-            
-            return jsonify({"status": "ok"}), 200
-            
-        except Exception as e:
-            logger.error(f"Error handling optimized Facebook webhook: {e}")
-            return jsonify({"status": "error"}), 500
+    # Override the existing send_whatsapp_message method to use the fast version
+    def send_whatsapp_message(self, to_number, message):
+        """Override to use fast message sending"""
+        return self.send_whatsapp_message_fast(to_number, message)
     
     def process_facebook_message(self, from_number: str, message_body: str, 
                              message_id: str, message_type: str, media_url: str = None):
