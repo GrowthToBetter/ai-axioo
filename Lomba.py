@@ -1476,7 +1476,6 @@ class EnhancedEmergencyNLPSystem:
         📞 Darurat: 112
         📝 No: [ID]
 
-        Tim menindaklanjuti. Tetap aman!
         """
 
         urgency_level = extracted_info.get('urgency_level', 3)
@@ -1781,7 +1780,6 @@ class EnhancedEmergencyNLPSystem:
         📞 Darurat: 112
         📝 No: [ID]
 
-        Tim menindaklanjuti. Tetap aman!
         """
 
         urgency_level = extracted_info.get('urgency_level', 3)
@@ -1954,12 +1952,9 @@ class EnhancedEmergencyNLPSystem:
         📞 Darurat: 112
         📝 No: [ID]
 
-        Tim menindaklanjuti. Tetap aman!
 
         📞 Darurat: 112 (umum) · 119 (medis) · 110 (polisi)
         📝 No: [report_id]
-
-        Tim resmi sedang menindaklanjuti. Tetap aman!
         """
 
         urgency_level = extracted_info.get("urgency_level", 3)
@@ -2279,7 +2274,7 @@ class EnhancedEmergencyNLPSystem:
         1. Profesional namun empati
         2. Memberikan instruksi yang jelas dan terstruktur  
         3. Menyertakan informasi yang relevan
-        4. Panjang respons 2-4 kalimat
+        4. Menjelaskan secara komprehensive
         5. Fokus pada tindakan konkret
         """
         
