@@ -1226,12 +1226,12 @@ class EnhancedEmergencyNLPSystem:
             if not hasattr(self, '_fast_session'):
                 self._fast_session = requests.Session()
                 self._fast_session.headers.update({
-                    'Authorization': f'Bearer {self.access_token}',
+                    'Authorization': f'Bearer {FACEBOOK_ACCESS_TOKEN}',
                     'Content-Type': 'application/json',
                     'Connection': 'keep-alive'
                 })
 
-            url = f"https://graph.facebook.com/v18.0/{self.phone_number_id}/messages"
+            url = f"https://graph.facebook.com/v18.0/{FACEBOOK_PHONE_NUMBER_ID}/messages"
             payload = {
                 "messaging_product": "whatsapp",
                 "recipient_type": "individual",
@@ -1390,7 +1390,7 @@ class EnhancedEmergencyNLPSystem:
             if not hasattr(self, '_fast_session'):
                 self._fast_session = requests.Session()
                 self._fast_session.headers.update({
-                    'Authorization': f'Bearer {self.access_token}',
+                    'Authorization': f'Bearer {FACEBOOK_ACCESS_TOKEN}',
                     'Content-Type': 'application/json',
                     'Connection': 'keep-alive',
                     'User-Agent': 'Emergency-NLP-System/1.0'
@@ -1399,7 +1399,7 @@ class EnhancedEmergencyNLPSystem:
                 adapter = requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=20)
                 self._fast_session.mount('https://', adapter)
 
-            url = f"https://graph.facebook.com/v18.0/{self.phone_number_id}/messages"
+            url = f"https://graph.facebook.com/v18.0/{FACEBOOK_PHONE_NUMBER_ID}/messages"
 
             payload = {
                 "messaging_product": "whatsapp",
