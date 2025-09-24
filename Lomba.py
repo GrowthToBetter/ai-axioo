@@ -525,17 +525,8 @@ class EnhancedEmergencyNLPSystem:
                 """
 
                 user_prompt = f"""
-                Laporan dari pengguna:
                 "{message_body}"
-
-                Informasi ekstraksi:
-                - Jenis Darurat: {raw_emergency_type}
-                - Lokasi: {raw_location}
-                - Tingkat Urgensi: {urgency_level}/5
-                - Tindakan segera: {', '.join(extracted_info.get('immediate_actions', []))}
-
                 Nomor Laporan: {report_id}
-
                 Buat respons profesional untuk ditampilkan di web chat.
                 """
 
@@ -613,35 +604,39 @@ class EnhancedEmergencyNLPSystem:
                 response.headers.add("Access-Control-Allow-Methods", "GET,PUT,POST,DELETE,OPTIONS")
                 return response
 
-            def generate_stream():
+            # ✅ CRITICAL: Parse request data HERE — while request context is active
+            try:
+                data = request.get_json()
+                if not data:
+                    return jsonify({"status": "error", "message": "Invalid JSON"}), 400
+
+                from_number = data.get("From", "").replace("whatsapp:", "").strip()
+                message_body = data.get("Body", "").strip()
+
+                if not from_number or not message_body:
+                    return jsonify({"status": "error", "message": "Missing data"}), 400
+
+            except Exception as e:
+                logger.error(f"Error parsing request: {e}", exc_info=True)
+                return jsonify({"status": "error", "message": "Bad request"}), 400
+
+            # Now define the generator using the captured data
+            def generate_stream(captured_data, captured_from_number, captured_message_body):
                 try:
-                    # Parse JSON body
-                    data = request.get_json()
-                    if not data:
-                        yield f"data: {json.dumps({'status': 'error', 'message': 'Invalid JSON'})}\n\n"
-                        return
-
-                    from_number = data.get("From", "").replace("whatsapp:", "").strip()
-                    message_body = data.get("Body", "").strip()
-
-                    if not from_number or not message_body:
-                        yield f"data: {json.dumps({'status': 'error', 'message': 'Missing data'})}\n\n"
-                        return
-
                     # Send immediate acknowledgment
                     yield f"data: {json.dumps({'type': 'status', 'message': 'Memproses laporan...'})}\n\n"
 
                     # Context for AI
                     context = {
                         "source": "web",
-                        "phone_number": from_number,
+                        "phone_number": captured_from_number,
                         "message_type": "text",
                         "timestamp": datetime.datetime.now().isoformat()
                     }
 
                     # Extract emergency info
                     yield f"data: {json.dumps({'type': 'status', 'message': 'Menganalisis tingkat kedaruratan...'})}\n\n"
-                    extracted_info = self.extract_emergency_info_enhanced(message_body, context)
+                    extracted_info = self.extract_emergency_info_enhanced(captured_message_body, context)
 
                     # Process extracted info
                     try:
@@ -664,21 +659,20 @@ class EnhancedEmergencyNLPSystem:
 
                     # Generate report ID
                     report_id = f"WEB{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
-
                     yield f"data: {json.dumps({'type': 'report_id', 'report_id': report_id})}\n\n"
 
                     # Create and save report
                     yield f"data: {json.dumps({'type': 'status', 'message': 'Menyimpan laporan ke database...'})}\n\n"
-                    
+
                     report = EmergencyReport(
                         id=report_id,
                         timestamp=datetime.datetime.now(),
-                        caller_info=f"Web Chat: {from_number}",
-                        caller_phone=from_number,
+                        caller_info=f"Web Chat: {captured_from_number}",
+                        caller_phone=captured_from_number,
                         location=raw_location,
                         emergency_type=emergency_type,
                         urgency_level=UrgencyLevel(urgency_level),
-                        description=message_body,
+                        description=captured_message_body,
                         structured_data=extracted_info,
                         ai_recommendations=extracted_info.get("immediate_actions", []),
                         status=ReportStatus.BARU
@@ -686,7 +680,12 @@ class EnhancedEmergencyNLPSystem:
 
                     db_success = self.save_report_to_postgresql(report)
                     self.save_whatsapp_conversation(
-                        from_number, message_body, f"SID_{report_id}", "text", None, report_id
+                        captured_from_number,
+                        captured_message_body,
+                        f"SID_{report_id}",
+                        "text",
+                        None,
+                        report_id
                     )
 
                     yield f"data: {json.dumps({'type': 'status', 'message': 'Menyiapkan respons darurat...'})}\n\n"
@@ -699,21 +698,12 @@ class EnhancedEmergencyNLPSystem:
                     - Fokus pada keselamatan pengguna
                     - Tidak terlalu panjang (maks 200 kata)
                     - Cocok ditampilkan di antarmuka web chat
-                    - Pesan Komprehensive yang bisa dipahami orang awam dengan langkah jelas
+                    - Pesan komprehensif yang bisa dipahami orang awam dengan langkah jelas
                     """
 
                     user_prompt = f"""
-                    Laporan dari pengguna:
-                    "{message_body}"
-
-                    Informasi ekstraksi:
-                    - Jenis Darurat: {raw_emergency_type}
-                    - Lokasi: {raw_location}
-                    - Tingkat Urgensi: {urgency_level}/5
-                    - Tindakan segera: {', '.join(extracted_info.get('immediate_actions', []))}
-
+                    "{captured_message_body}"
                     Nomor Laporan: {report_id}
-
                     Buat respons profesional untuk ditampilkan di web chat.
                     """
 
@@ -730,13 +720,11 @@ class EnhancedEmergencyNLPSystem:
                         )
 
                         # Stream the AI response token by token
-                        ai_response = ""
                         for chunk in response:
                             if chunk.choices[0].delta.content:
                                 token = chunk.choices[0].delta.content
-                                ai_response += token
                                 yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
-                                
+
                     except Exception as openai_error:
                         logger.error(f"OpenAI streaming error: {openai_error}")
                         fallback_message = (
@@ -745,12 +733,12 @@ class EnhancedEmergencyNLPSystem:
                             "Langkah segera: pastikan keselamatan Anda, jauhi bahaya, dan tunggu bantuan. "
                             "📞 Hubungi 112 jika situasi kritis."
                         )
-                        
-                        # Stream fallback message word by word for consistent UX
+
+                        # Stream fallback message word by word
                         words = fallback_message.split()
                         for word in words:
                             yield f"data: {json.dumps({'type': 'token', 'content': word + ' '})}\n\n"
-                            time.sleep(0.05)  # Small delay for natural typing effect
+                            time.sleep(0.05)
 
                     # Send completion data
                     final_data = {
@@ -766,25 +754,25 @@ class EnhancedEmergencyNLPSystem:
                             "report_followup": f"Gunakan nomor laporan: {report_id}"
                         }
                     }
-                    
                     yield f"data: {json.dumps(final_data)}\n\n"
 
                 except Exception as e:
                     logger.error(f"Streaming error: {e}", exc_info=True)
                     yield f"data: {json.dumps({'type': 'error', 'message': 'Terjadi kesalahan sistem'})}\n\n"
 
-            response = Response(
-                generate_stream(),
-                mimetype="text/plain",
+            # Return streaming response
+            return Response(
+                generate_stream(data, from_number, message_body),
+                mimetype="text/event-stream",  # ✅ Better for SSE
                 headers={
                     "Cache-Control": "no-cache",
                     "Connection": "keep-alive",
                     "Access-Control-Allow-Origin": "*",
                     "Access-Control-Allow-Headers": "Content-Type,Authorization",
-                    "Access-Control-Allow-Methods": "GET,PUT,POST,DELETE,OPTIONS"
+                    "Access-Control-Allow-Methods": "GET,PUT,POST,DELETE,OPTIONS",
+                    "X-Accel-Buffering": "no"  # Prevents buffering in nginx
                 }
             )
-            return response
     def enhanced_speech_to_text(self, audio_file_path: str = None, audio_data = None) -> Optional[str]:
         """Enhanced speech recognition dengan multiple fallback"""
         methods = [
