@@ -1304,120 +1304,36 @@ class EnhancedEmergencyNLPSystem:
             )
 
     def generate_and_send_enhanced_response(self, from_number, extracted_info, message_body, 
-                                         report_id, message_id, message_type, media_url=None):
-        """Generate AI response using existing enhanced functions and send with proper formatting"""
+                                     report_id, message_id, message_type, media_url=None):
+        """Generate AI response using existing GPT functions and send with proper formatting"""
         try:
-            # Use the existing extract_emergency_info_enhanced output for comprehensive response
-            urgency_level = extracted_info.get('urgency_level', 3)
-            emergency_type = extracted_info.get('emergency_type', 'lainnya')
-            location_info = extracted_info.get('location', {})
-            immediate_actions = extracted_info.get('immediate_actions', [])
-            safety_instructions = extracted_info.get('safety_instructions', [])
-
-            # Build comprehensive response using extracted data
-            response_parts = []
-
-            # Header with confirmation
-            response_parts.append(f"🚨 LAPORAN DARURAT DITERIMA")
-            response_parts.append(f"📝 No: {report_id}")
-            response_parts.append("")
-
-            # Emergency type and urgency
-            emergency_emoji = {
-                'kebakaran': '🔥',
-                'banjir': '🌊', 
-                'gempa': '⚡',
-                'kecelakaan': '🚗',
-                'medis': '🏥',
-                'hewan_berbahaya': '🐍',
-                'pohon_tumbang': '🌳',
-                'lainnya': '⚠️'
-            }
-
-            emoji = emergency_emoji.get(emergency_type, '⚠️')
-            urgency_text = {1: "Rendah", 2: "Sedang", 3: "Menengah", 4: "Tinggi", 5: "KRITIS"}
-
-            response_parts.append(f"{emoji} Jenis: {emergency_type.upper()}")
-            response_parts.append(f"📊 Urgensi: {urgency_level}/5 ({urgency_text.get(urgency_level, 'Menengah')})")
-
-            if location_info.get('raw_location', 'tidak spesifik') != 'tidak spesifik':
-                response_parts.append(f"📍 Lokasi: {location_info.get('raw_location')}")
-
-            response_parts.append("")
-
-            # Immediate actions from AI analysis
-            if immediate_actions:
-                response_parts.append("⚡ TINDAKAN SEGERA:")
-                for i, action in enumerate(immediate_actions[:3], 1):  # Top 3 actions
-                    response_parts.append(f"• {action}")
-            else:
-                response_parts.append("⚡ TINDAKAN SEGERA:")
-                response_parts.append("• Tetap tenang dan jangan panik")
-                response_parts.append("• Pastikan keselamatan pribadi")
-                response_parts.append("• Jauhi area berbahaya")
-
-            response_parts.append("")
-
-            # Safety instructions if available
-            if safety_instructions:
-                response_parts.append("🛡️ KESELAMATAN:")
-                for instruction in safety_instructions[:2]:  # Top 2 safety tips
-                    response_parts.append(f"• {instruction}")
-                response_parts.append("")
-
-            # Emergency contacts based on type
-            contact_numbers = {
-                'kebakaran': "🚒 Damkar: 113",
-                'medis': "🚑 Ambulans: 119", 
-                'kecelakaan': "🚔 Polisi: 110",
-                'banjir': "🌊 BPBD: 112"
-            }
-
-            if emergency_type in contact_numbers:
-                response_parts.append(contact_numbers[emergency_type])
-
-            response_parts.append("📞 Darurat Umum: 112")
-            response_parts.append("")
-            response_parts.append("✅ Tim darurat sedang menindaklanjuti")
-            response_parts.append("🔒 Tetap aman dan ikuti instruksi!")
-
-            # Join all parts
-            full_response = "\n".join(response_parts)
-
-            # Check if response is too long for single WhatsApp message
-            if len(full_response) > 1000:
-                # Split into chunks if too long
-                chunks = self.split_response_for_whatsapp(full_response, 800)
-
-                # Send chunks with minimal delay
-                for i, chunk in enumerate(chunks):
-                    if i == 0:
-                        success = self.send_whatsapp_message_fast(from_number, chunk)
-                        if not success:
-                            # Fallback for first chunk failure
-                            self.send_whatsapp_message_fast(
-                                from_number, 
-                                f"🚨 Laporan {report_id} diterima. Tim menindaklanjuti. Hubungi 112 jika darurat."
-                            )
-                            break
-                    else:
-                        time.sleep(0.5)  # Small delay for natural flow
-                        self.send_whatsapp_message_fast(from_number, chunk)
-            else:
-                # Send as single message
-                success = self.send_whatsapp_message_fast(from_number, full_response)
-                if not success:
-                    # Fallback response
-                    fallback = f"🚨 Laporan darurat {report_id} diterima\n📞 Hubungi 112 untuk bantuan segera\n✅ Tim sedang menindaklanjuti"
-                    self.send_whatsapp_message_fast(from_number, fallback)
-
+            # Use existing generate_optimized_emergency_response function for GPT-generated content
+            ai_response = self.generate_optimized_emergency_response(
+                extracted_info, message_body, report_id, from_number
+            )
+            
+            # If the existing function returns a fallback, try the alternative generate_text_response
+            if len(ai_response) < 100 or "Laporan darurat diterima" in ai_response:
+                try:
+                    ai_response = self.generate_text_response(extracted_info, message_body, report_id)
+                except Exception as text_error:
+                    logger.error(f"Alternative text response failed: {text_error}")
+            
+            # Send the GPT-generated response
+            success = self.send_whatsapp_message_fast(from_number, ai_response)
+            
+            if not success:
+                # Final fallback if sending fails
+                fallback = f"🚨 Laporan darurat {report_id} diterima\n📞 Hubungi 112 untuk bantuan segera\n✅ Tim sedang menindaklanjuti"
+                self.send_whatsapp_message_fast(from_number, fallback)
+    
             # Save to database (non-blocking, after response sent)
             threading.Thread(
                 target=self.save_report_data_background,
                 args=(extracted_info, message_body, report_id, from_number, 
                       message_id, message_type, media_url)
             ).start()
-
+    
         except Exception as e:
             logger.error(f"Error in enhanced response generation: {e}")
             # Use existing generate_optimized_emergency_response as ultimate fallback
