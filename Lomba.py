@@ -541,7 +541,7 @@ class EnhancedEmergencyNLPSystem:
 
                 try:
                     response = client.chat.completions.create(
-                        model="gpt-4",
+                        model="gpt-3.5-turbo",
                         messages=[
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_prompt}
@@ -808,7 +808,7 @@ class EnhancedEmergencyNLPSystem:
         for attempt in range(max_retries):
             try:
                 response = client.chat.completions.create(
-                    model="gpt-4",
+                    model="gpt-3.5-turbo",
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": f"Laporan: {text[:2000]}{context_info}"}
@@ -1278,7 +1278,7 @@ class EnhancedEmergencyNLPSystem:
 
         try:
             response = client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
@@ -1458,7 +1458,7 @@ class EnhancedEmergencyNLPSystem:
 
         try:
             response = client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
@@ -1661,7 +1661,7 @@ class EnhancedEmergencyNLPSystem:
         
         try:
             response = client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt}
@@ -1771,7 +1771,7 @@ class EnhancedEmergencyNLPSystem:
         
         try:
             response = client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt}
@@ -1924,7 +1924,7 @@ class EnhancedEmergencyNLPSystem:
         print(f"\n🚀 METRICS PERFORMA")
         print(f"├── Database: Supabase PostgreSQL ✅")
         print(f"├── Connection: {DB_CONFIG['host']} ✅")
-        print(f"├── AI Processing: GPT-4 ✅") 
+        print(f"├── AI Processing: gpt-3.5-turbo ✅") 
         print(f"├── Voice Recognition: Multi-engine ✅")
         print(f"└── WhatsApp Bot: Twilio API ✅")
         
